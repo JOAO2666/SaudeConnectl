@@ -1,0 +1,198 @@
+export type Role = 'user' | 'admin';
+
+export type User = {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  avatar: string;
+  provider: string;
+  createdAt?: string;
+  created_at?: string;
+  lastLogin?: string;
+  last_login?: string;
+};
+
+export type Unit = {
+  id: string;
+  name: string;
+  type: string;
+  city: string;
+  district: string;
+  address: string;
+  phone: string;
+  status: string;
+  distance_km: number;
+  hours: string;
+  lat: number;
+  lng: number;
+  services: string[];
+};
+
+export type AppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+
+export type Appointment = {
+  id: string;
+  user_id: string;
+  unit_id: string;
+  specialty: string;
+  professional: string;
+  scheduled_at: string;
+  status: AppointmentStatus;
+  reason: string;
+  notes: string;
+  created_at: string;
+  unit_name?: string;
+  unit_district?: string;
+  unit_phone?: string;
+  user_name?: string;
+  user_email?: string;
+};
+
+export type Exam = {
+  id: string;
+  title: string;
+  unit: string;
+  requested_at: string;
+  status: string;
+  result_url: string | null;
+};
+
+export type RecordItem = {
+  id: string;
+  category: string;
+  title: string;
+  description: string;
+  created_at: string;
+};
+
+export type PatientProfile = {
+  user_id: string;
+  cpf: string;
+  birth_date: string;
+  phone: string;
+  sus_card: string;
+  address: string;
+  emergency_contact: string;
+  updated_at: string;
+};
+
+export type TriageRisk = 'low' | 'medium' | 'high' | 'critical';
+export type TriageStatus = 'waiting' | 'in_service' | 'resolved';
+
+export type TriageCase = {
+  id: string;
+  user_id: string;
+  symptoms: string;
+  risk_level: TriageRisk;
+  status: TriageStatus;
+  recommendation: string;
+  created_at: string;
+  user_name?: string;
+  user_email?: string;
+};
+
+export type QueueStatus = 'waiting' | 'called' | 'done' | 'cancelled';
+
+export type QueueEntry = {
+  id: string;
+  user_id: string;
+  unit_id: string;
+  service: string;
+  position: number;
+  estimated_minutes: number;
+  status: QueueStatus;
+  created_at: string;
+  unit_name?: string;
+  unit_address?: string;
+  user_name?: string;
+  user_email?: string;
+};
+
+export type TicketStatus = 'open' | 'in_review' | 'resolved';
+export type Priority = 'low' | 'medium' | 'high';
+
+export type Ticket = {
+  id: string;
+  user_id: string;
+  subject: string;
+  message: string;
+  status: TicketStatus;
+  priority: Priority;
+  created_at: string;
+  user_name?: string;
+  user_email?: string;
+};
+
+export type Announcement = {
+  id: string;
+  title: string;
+  body: string;
+  audience: 'all' | 'users' | 'admins';
+  published_at: string;
+};
+
+export type Integration = {
+  id: string;
+  name: string;
+  status: 'online' | 'degraded' | 'offline';
+  last_sync: string;
+  latency_ms: number;
+};
+
+export type AuditLog = {
+  id: string;
+  actor_id: string | null;
+  actor_name?: string;
+  action: string;
+  entity: string;
+  entity_id: string | null;
+  created_at: string;
+};
+
+export type DashboardPayload = {
+  user: User;
+  metrics: {
+    nextAppointments: number;
+    availableResults: number;
+    activeTickets: number;
+    connectedUnits: number;
+    activeTriage: number;
+    queuePosition: number;
+  };
+  appointments: Appointment[];
+  exams: Exam[];
+  records: RecordItem[];
+  profile: PatientProfile;
+  triage: TriageCase[];
+  queue: QueueEntry[];
+  tickets: Ticket[];
+  units: Unit[];
+  announcements: Announcement[];
+};
+
+export type AdminPayload = {
+  overview: {
+    users: number;
+    appointments: number;
+    openTickets: number;
+    integrationsOnline: number;
+    triageWaiting: number;
+    queueWaiting: number;
+  };
+  appointments: Appointment[];
+  users: User[];
+  tickets: Ticket[];
+  triage: TriageCase[];
+  queue: QueueEntry[];
+  integrations: Integration[];
+  auditLogs: AuditLog[];
+};
+
+export type BootstrapPayload = {
+  googleEnabled: boolean;
+  demo: {
+    user: { email: string; password: string };
+    admin: { email: string; password: string };
+  };
+};

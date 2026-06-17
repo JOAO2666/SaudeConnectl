@@ -109,6 +109,13 @@ artifacts/screenshots
 
 Este projeto já inclui `Dockerfile` e metadados no README para rodar como Docker Space.
 
+Também há um workflow em `.github/workflows/deploy-huggingface.yml`. Para publicar pelo GitHub:
+
+1. Crie um token no Hugging Face com permissão de escrita.
+2. No GitHub, adicione esse token em `Settings > Secrets and variables > Actions > Secrets` com o nome `HF_TOKEN`.
+3. Opcionalmente, adicione a variável `HF_SPACE_ID` com `seu-usuario/SaudeConnectl`.
+4. Execute o workflow `Deploy Hugging Face Space`.
+
 Variáveis recomendadas no Space:
 
 ```txt

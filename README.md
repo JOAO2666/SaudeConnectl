@@ -24,6 +24,7 @@ Aplicação full-stack para integração em saúde, com portal do paciente, pain
 - Suporte a Google OAuth quando credenciais forem configuradas no ambiente.
 - Separacao entre usuario comum e administrador.
 - Portal do paciente com Início, Mapa, Cadastro, Prontuários, Triagem e Fila.
+- Cadastro com upload de foto de perfil do cidadão.
 - Mapa gratuito com OpenStreetMap e Leaflet.
 - Painel admin com usuarios, agendamentos, triagem, fila, integrações e auditoria.
 - API Node/Express com validacao, rate limit, Helmet, CORS e banco SQLite.
@@ -52,6 +53,8 @@ O projeto nao depende de Supabase. Ele usa um sistema de autenticacao proprio no
 - Rate limit, Helmet, CORS configuravel e validacao de entrada com `zod`.
 
 Para producao, configure um `JWT_SECRET` forte, mantenha `GOOGLE_CLIENT_SECRET` como segredo do ambiente e use armazenamento persistente em `DATA_DIR`.
+
+As fotos de perfil enviadas pelos usuários ficam em `DATA_DIR/uploads/avatars` e são servidas pela rota `/uploads`.
 
 ## Rodar localmente
 

@@ -31,7 +31,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { MapContainer, Marker, Popup, TileLayer, ZoomControl } from 'react-leaflet';
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
-import { api, fetchBootstrap, googleAuthUrl } from './api';
+import { api, fetchBootstrap, googleAuthUrl, mediaUrl } from './api';
 import { AuthProvider, useAuth } from './auth';
 import type {
   AdminPayload,
@@ -48,6 +48,7 @@ import type {
   TriageRisk,
   TriageStatus,
   Unit,
+  User,
 } from './types';
 
 const markerIcon = L.divIcon({
@@ -492,6 +493,7 @@ function MapPage({ units }: { units: Unit[] }) {
 }
 
 function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: () => Promise<void> }) {
+  const { refresh, user } = useAuth();
   const [form, setForm] = useState({
     cpf: profile.cpf || '',
     birthDate: profile.birth_date || '',
@@ -501,6 +503,8 @@ function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: (
     emergencyContact: profile.emergency_contact || '',
   });
   const [message, setMessage] = useState('');
+  const [avatarPreview, setAvatarPreview] = useState(user?.avatar || '');
+  const [avatarBusy, setAvatarBusy] = useState(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -514,9 +518,51 @@ function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: (
     }
   }
 
+  async function uploadAvatar(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setMessage('');
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setMessage('Envie uma imagem PNG, JPG ou WebP.');
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setMessage('A foto deve ter no maximo 2 MB.');
+      return;
+    }
+
+    setAvatarBusy(true);
+    try {
+      const imageData = await fileToDataUrl(file);
+      setAvatarPreview(imageData);
+      const payload = await api<{ user: User }>('/auth/avatar', { method: 'POST', body: { imageData } });
+      setAvatarPreview(payload.user.avatar);
+      await refresh();
+      setMessage('Foto atualizada com sucesso.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Falha ao enviar foto.');
+    } finally {
+      setAvatarBusy(false);
+      event.target.value = '';
+    }
+  }
+
   return (
     <form className="form-grid-panel" onSubmit={submit}>
       <SectionHeader icon={<UserPlus />} title="Cadastro do cidadão" />
+      <div className="photo-uploader full-span">
+        <Avatar label={avatarPreview || user?.name || 'SC'} />
+        <div>
+          <strong>Foto do perfil</strong>
+          <span>Use uma imagem PNG, JPG ou WebP de ate 2 MB.</span>
+        </div>
+        <label className="upload-button">
+          {avatarBusy ? 'Enviando...' : 'Anexar foto'}
+          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadAvatar} disabled={avatarBusy} />
+        </label>
+      </div>
       <label>
         CPF
         <input value={form.cpf} onChange={(event) => setForm({ ...form, cpf: event.target.value })} />
@@ -1104,7 +1150,21 @@ function Avatar({ label }: { label: string }) {
         .toUpperCase(),
     [label],
   );
+
+  if (label.startsWith('/uploads/') || /^https?:\/\//.test(label)) {
+    return <img className="avatar avatar-image" src={mediaUrl(label)} alt="Foto do perfil" />;
+  }
+
   return <span className="avatar">{initials}</span>;
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('Nao foi possivel ler a imagem.'));
+    reader.readAsDataURL(file);
+  });
 }
 
 function FullPageLoader({ label = 'Carregando...' }: { label?: string }) {

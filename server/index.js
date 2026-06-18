@@ -9,7 +9,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import passport from 'passport';
 import router from './routes.js';
-import { initDb } from './db.js';
+import { dataDir, initDb } from './db.js';
 
 dotenv.config();
 initDb();
@@ -73,12 +73,13 @@ app.use(
     legacyHeaders: false,
   }),
 );
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
 app.use(passport.initialize());
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.use('/api', cors(corsOptions), router);
+app.use('/uploads', express.static(path.join(dataDir, 'uploads')));
 app.use(express.static(distDir));
 
 app.use((req, res, next) => {

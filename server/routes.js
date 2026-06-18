@@ -1,11 +1,13 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import express from 'express';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { z } from 'zod';
 import { authRequired, adminRequired, revokeCurrentSession, signToken } from './auth.js';
-import { db, logAudit, publicUser } from './db.js';
+import { dataDir, db, logAudit, publicUser } from './db.js';
 
 const router = express.Router();
 const now = () => new Date().toISOString();
@@ -106,6 +108,10 @@ const profileSchema = z.object({
   susCard: z.string().optional().default(''),
   address: z.string().optional().default(''),
   emergencyContact: z.string().optional().default(''),
+});
+
+const avatarSchema = z.object({
+  imageData: z.string().min(1),
 });
 
 const recordSchema = z.object({
@@ -216,6 +222,52 @@ router.get(
 
 router.get('/auth/me', authRequired, (req, res) => {
   res.json({ user: req.publicUser });
+});
+
+router.post('/auth/avatar', authRequired, (req, res, next) => {
+  try {
+    const { imageData } = avatarSchema.parse(req.body);
+    const match = imageData.match(/^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=]+)$/);
+
+    if (!match) {
+      return res.status(400).json({ message: 'Envie uma imagem PNG, JPG ou WebP.' });
+    }
+
+    const mimeType = match[1];
+    const extension = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : 'jpg';
+    const buffer = Buffer.from(match[2], 'base64');
+    const maxBytes = 2 * 1024 * 1024;
+
+    if (buffer.length > maxBytes) {
+      return res.status(400).json({ message: 'A foto deve ter no maximo 2 MB.' });
+    }
+
+    if (!isValidImageBuffer(buffer, mimeType)) {
+      return res.status(400).json({ message: 'O arquivo enviado nao parece ser uma imagem valida.' });
+    }
+
+    const uploadsDir = path.join(dataDir, 'uploads', 'avatars');
+    fs.mkdirSync(uploadsDir, { recursive: true });
+
+    const previousAvatar = req.user.avatar;
+    const fileName = `${req.user.id}-${crypto.randomUUID()}.${extension}`;
+    const filePath = path.join(uploadsDir, fileName);
+    fs.writeFileSync(filePath, buffer);
+
+    const avatarUrl = `/uploads/avatars/${fileName}`;
+    db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatarUrl, req.user.id);
+
+    if (previousAvatar?.startsWith('/uploads/avatars/')) {
+      const previousFile = path.join(dataDir, previousAvatar.replace(/^\/uploads\//, 'uploads/'));
+      fs.rmSync(previousFile, { force: true });
+    }
+
+    logAudit(req.user.id, 'updated_avatar', 'users', req.user.id);
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    return res.json({ user: publicUser(user) });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 router.post('/auth/logout', authRequired, (req, res) => {
@@ -645,6 +697,22 @@ function normalizeUnit(unit) {
     lat: Number(unit.lat),
     lng: Number(unit.lng),
   };
+}
+
+function isValidImageBuffer(buffer, mimeType) {
+  if (mimeType === 'image/png') {
+    return buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+
+  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[buffer.length - 2] === 0xff && buffer[buffer.length - 1] === 0xd9;
+  }
+
+  if (mimeType === 'image/webp') {
+    return buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+  }
+
+  return false;
 }
 
 function profileForUser(userId) {

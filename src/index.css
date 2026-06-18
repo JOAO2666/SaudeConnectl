@@ -567,6 +567,63 @@ label span:focus-within {
   font-weight: 900;
 }
 
+.avatar-image {
+  display: block;
+  object-fit: cover;
+  border: 2px solid white;
+}
+
+.photo-uploader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #fbfdff;
+}
+
+.photo-uploader .avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  font-size: 1rem;
+}
+
+.photo-uploader strong,
+.photo-uploader span {
+  display: block;
+}
+
+.photo-uploader span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 500;
+}
+
+.upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 12px;
+  color: var(--teal-dark);
+  background: #edf5f3;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .metrics-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -1227,6 +1284,14 @@ label span:focus-within {
   .units-band {
     padding: 16px;
     border-radius: 20px;
+  }
+
+  .photo-uploader {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .photo-uploader .upload-button {
+    grid-column: 1 / -1;
   }
 
   .admin-row {

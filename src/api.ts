@@ -42,6 +42,13 @@ export function googleAuthUrl() {
   return `${API_BASE}/auth/google`;
 }
 
+export function mediaUrl(path: string) {
+  if (!path || /^https?:\/\//.test(path)) return path;
+  if (!path.startsWith('/')) return path;
+  const origin = API_BASE.endsWith('/api') ? API_BASE.slice(0, -4) : '';
+  return `${origin}${path}`;
+}
+
 export function fetchBootstrap() {
   return api<BootstrapPayload>('/bootstrap');
 }

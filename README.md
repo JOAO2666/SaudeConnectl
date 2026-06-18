@@ -12,6 +12,7 @@ pinned: false
 
 [![React](https://img.shields.io/badge/React-19-149eca?logo=react)](https://react.dev/)
 [![Node.js](https://img.shields.io/badge/Node.js-Express-3c873a?logo=node.js)](https://nodejs.org/)
+[![Vercel](https://img.shields.io/badge/Vercel-Live-000000?logo=vercel)](https://saudeconnectl.vercel.app)
 [![Hugging Face Spaces](https://img.shields.io/badge/Hugging%20Face-Spaces-ffcc4d?logo=huggingface)](https://huggingface.co/spaces/Joaoemanuel2666/SaudeConnect-Web)
 [![Auth](https://img.shields.io/badge/Auth-JWT%20%2B%20Google%20OAuth-0f8b8d)](#autenticacao-e-seguranca)
 
@@ -140,6 +141,35 @@ As capturas ficam em:
 artifacts/screenshots
 ```
 
+## Publicacao na Vercel
+
+O projeto inclui `vercel.json` e uma funcao serverless em `api/[...path].js`. Para publicar:
+
+```bash
+vercel --prod
+```
+
+Variaveis de producao necessarias:
+
+```txt
+JWT_SECRET=um-segredo-longo-e-aleatorio
+JWT_TTL=7d
+CLIENT_URL=https://saudeconnectl.vercel.app
+CLIENT_ORIGIN=https://saudeconnectl.vercel.app
+GOOGLE_CLIENT_ID=seu-client-id-google
+GOOGLE_CLIENT_SECRET=seu-client-secret-google
+GOOGLE_CALLBACK_URL=https://saudeconnectl.vercel.app/api/auth/google/callback
+```
+
+No cliente OAuth do Google, autorize:
+
+```txt
+Origem JavaScript: https://saudeconnectl.vercel.app
+URI de redirecionamento: https://saudeconnectl.vercel.app/api/auth/google/callback
+```
+
+Na Vercel, o SQLite e os uploads usam o diretorio temporario da funcao. Isso atende a demonstracao; para dados permanentes em producao, conecte um banco gerenciado e armazenamento de arquivos persistente.
+
 ## Publicação no Hugging Face Spaces
 
 Este projeto já inclui `Dockerfile` e metadados no README para rodar como Docker Space.
@@ -171,7 +201,13 @@ https://joaoemanuel2666-saudeconnect-web.hf.space/api/auth/google/callback
 
 ## Demo online
 
-Versao publicada no Hugging Face Spaces:
+Versao principal publicada na Vercel:
+
+```txt
+https://saudeconnectl.vercel.app
+```
+
+Versao alternativa no Hugging Face Spaces:
 
 ```txt
 https://joaoemanuel2666-saudeconnect-web.hf.space

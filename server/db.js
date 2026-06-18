@@ -1,10 +1,15 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import Database from 'better-sqlite3';
 
-export const dataDir = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
+const defaultDataDir = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'saudeconnect-data')
+  : path.resolve(process.cwd(), 'data');
+
+export const dataDir = process.env.DATA_DIR || defaultDataDir;
 fs.mkdirSync(dataDir, { recursive: true });
 
 export const db = new Database(path.join(dataDir, 'saudeconnect.sqlite'));

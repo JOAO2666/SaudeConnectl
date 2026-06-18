@@ -1,8 +1,8 @@
+import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -11,7 +11,6 @@ import passport from 'passport';
 import router from './routes.js';
 import { dataDir, initDb } from './db.js';
 
-dotenv.config();
 initDb();
 
 const app = express();
@@ -80,6 +79,7 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.use('/api', cors(corsOptions), router);
 app.use('/uploads', express.static(path.join(dataDir, 'uploads')));
+app.use('/api/uploads', express.static(path.join(dataDir, 'uploads')));
 app.use(express.static(distDir));
 
 app.use((req, res, next) => {
@@ -105,6 +105,10 @@ app.use((error, _req, res, _next) => {
   return res.status(500).json({ message: 'Erro interno no servidor.' });
 });
 
-app.listen(port, () => {
-  console.log(`SaudeConnect API em http://localhost:${port}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`SaudeConnect API em http://localhost:${port}`);
+  });
+}
+
+export default app;

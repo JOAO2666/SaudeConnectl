@@ -254,11 +254,16 @@ router.post('/auth/avatar', authRequired, (req, res, next) => {
     const filePath = path.join(uploadsDir, fileName);
     fs.writeFileSync(filePath, buffer);
 
-    const avatarUrl = `/uploads/avatars/${fileName}`;
+    const avatarUrl = process.env.VERCEL
+      ? `/api/uploads/avatars/${fileName}`
+      : `/uploads/avatars/${fileName}`;
     db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatarUrl, req.user.id);
 
-    if (previousAvatar?.startsWith('/uploads/avatars/')) {
-      const previousFile = path.join(dataDir, previousAvatar.replace(/^\/uploads\//, 'uploads/'));
+    if (/^\/(?:api\/)?uploads\/avatars\//.test(previousAvatar || '')) {
+      const previousFile = path.join(
+        dataDir,
+        previousAvatar.replace(/^\/(?:api\/)?uploads\//, 'uploads/'),
+      );
       fs.rmSync(previousFile, { force: true });
     }
 

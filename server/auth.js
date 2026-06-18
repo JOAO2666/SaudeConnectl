@@ -4,24 +4,41 @@ import { db, publicUser } from './db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me-before-production';
 const TOKEN_TTL = process.env.JWT_TTL || '7d';
+const isVercel = Boolean(process.env.VERCEL);
 
 export function signToken(user, req) {
   const tokenId = crypto.randomUUID();
-  const token = jwt.sign({ sub: user.id, role: user.role, jti: tokenId }, JWT_SECRET, { expiresIn: TOKEN_TTL });
+  const token = jwt.sign(
+    {
+      sub: user.id,
+      role: user.role,
+      jti: tokenId,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      provider: user.provider || 'local',
+      createdAt: user.created_at,
+      lastLogin: user.last_login,
+    },
+    JWT_SECRET,
+    { expiresIn: TOKEN_TTL },
+  );
   const decoded = jwt.decode(token);
 
-  db.prepare(`
-    INSERT INTO auth_sessions (id, user_id, token_id, created_at, expires_at, ip_address, user_agent)
-    VALUES (@id, @user_id, @token_id, @created_at, @expires_at, @ip_address, @user_agent)
-  `).run({
-    id: crypto.randomUUID(),
-    user_id: user.id,
-    token_id: tokenId,
-    created_at: new Date().toISOString(),
-    expires_at: new Date(Number(decoded.exp) * 1000).toISOString(),
-    ip_address: req?.ip || null,
-    user_agent: req?.get?.('user-agent') || null,
-  });
+  if (!isVercel) {
+    db.prepare(`
+      INSERT INTO auth_sessions (id, user_id, token_id, created_at, expires_at, ip_address, user_agent)
+      VALUES (@id, @user_id, @token_id, @created_at, @expires_at, @ip_address, @user_agent)
+    `).run({
+      id: crypto.randomUUID(),
+      user_id: user.id,
+      token_id: tokenId,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Number(decoded.exp) * 1000).toISOString(),
+      ip_address: req?.ip || null,
+      user_agent: req?.get?.('user-agent') || null,
+    });
+  }
 
   return token;
 }
@@ -40,17 +57,36 @@ export function authRequired(req, res, next) {
       return res.status(401).json({ message: 'Sessao expirada ou invalida.' });
     }
 
-    const session = db
-      .prepare('SELECT * FROM auth_sessions WHERE token_id = ? AND user_id = ?')
-      .get(payload.jti, payload.sub);
+    const session = isVercel
+      ? null
+      : db.prepare('SELECT * FROM auth_sessions WHERE token_id = ? AND user_id = ?').get(payload.jti, payload.sub);
 
-    if (!session || session.revoked_at || Date.parse(session.expires_at) <= Date.now()) {
+    if (!isVercel && (!session || session.revoked_at || Date.parse(session.expires_at) <= Date.now())) {
       return res.status(401).json({ message: 'Sessao expirada ou invalida.' });
     }
 
-    const user = db
+    let user = db
       .prepare('SELECT * FROM users WHERE id = ?')
       .get(payload.sub);
+
+    if (!user && isVercel && payload.email && payload.name) {
+      db.prepare(`
+        INSERT OR IGNORE INTO users
+          (id, name, email, password_hash, role, avatar, provider, created_at, last_login)
+        VALUES
+          (@id, @name, @email, NULL, @role, @avatar, @provider, @created_at, @last_login)
+      `).run({
+        id: payload.sub,
+        name: payload.name,
+        email: payload.email,
+        role: payload.role === 'admin' ? 'admin' : 'user',
+        avatar: payload.avatar || null,
+        provider: payload.provider || 'local',
+        created_at: payload.createdAt || new Date().toISOString(),
+        last_login: payload.lastLogin || new Date().toISOString(),
+      });
+      user = db.prepare('SELECT * FROM users WHERE id = ? OR email = ?').get(payload.sub, payload.email);
+    }
 
     if (!user) {
       return res.status(401).json({ message: 'Usuario nao encontrado.' });
@@ -58,7 +94,7 @@ export function authRequired(req, res, next) {
 
     req.user = user;
     req.publicUser = publicUser(user);
-    req.authSession = session;
+    req.authSession = session || { id: null, token_id: payload.jti };
     return next();
   } catch {
     return res.status(401).json({ message: 'Sessao expirada ou invalida.' });

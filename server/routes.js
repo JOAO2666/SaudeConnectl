@@ -4,7 +4,7 @@ import express from 'express';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { z } from 'zod';
-import { authRequired, adminRequired, signToken } from './auth.js';
+import { authRequired, adminRequired, revokeCurrentSession, signToken } from './auth.js';
 import { db, logAudit, publicUser } from './db.js';
 
 const router = express.Router();
@@ -66,10 +66,19 @@ if (googleEnabled) {
   );
 }
 
+const passwordSchema = z
+  .string()
+  .min(10, 'A senha precisa ter pelo menos 10 caracteres.')
+  .max(128, 'A senha deve ter no maximo 128 caracteres.')
+  .regex(/[a-z]/, 'A senha precisa ter uma letra minuscula.')
+  .regex(/[A-Z]/, 'A senha precisa ter uma letra maiuscula.')
+  .regex(/[0-9]/, 'A senha precisa ter um numero.')
+  .regex(/[^A-Za-z0-9]/, 'A senha precisa ter um caractere especial.');
+
 const registerSchema = z.object({
-  name: z.string().min(3),
-  email: z.string().email(),
-  password: z.string().min(8),
+  name: z.string().min(3, 'Informe seu nome completo.'),
+  email: z.string().email('Informe um e-mail valido.'),
+  password: passwordSchema,
 });
 
 const loginSchema = z.object({
@@ -155,7 +164,7 @@ router.post('/auth/register', (req, res, next) => {
       VALUES (@id, @name, @email, @password_hash, @role, @avatar, 'local', @created_at, @last_login)
     `).run(user);
 
-    const token = signToken(user);
+    const token = signToken(user, req);
     logAudit(user.id, 'registered', 'users', user.id);
     return res.status(201).json({ user: publicUser(user), token });
   } catch (error) {
@@ -175,7 +184,7 @@ router.post('/auth/login', (req, res, next) => {
     db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(now(), user.id);
     const refreshed = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
     logAudit(user.id, 'logged_in', 'users', user.id);
-    return res.json({ user: publicUser(refreshed), token: signToken(refreshed) });
+    return res.json({ user: publicUser(refreshed), token: signToken(refreshed, req) });
   } catch (error) {
     return next(error);
   }
@@ -195,7 +204,7 @@ router.get(
   '/auth/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: '/login?oauth=failed' }),
   (req, res) => {
-    const token = signToken(req.user);
+    const token = signToken(req.user, req);
     const forwardedProto = req.get('x-forwarded-proto') || req.protocol;
     const forwardedHost = req.get('x-forwarded-host') || req.get('host');
     const clientUrl = process.env.CLIENT_URL || `${forwardedProto}://${forwardedHost}`;
@@ -207,6 +216,12 @@ router.get(
 
 router.get('/auth/me', authRequired, (req, res) => {
   res.json({ user: req.publicUser });
+});
+
+router.post('/auth/logout', authRequired, (req, res) => {
+  revokeCurrentSession(req);
+  logAudit(req.user.id, 'logged_out', 'auth_sessions', req.authSession.id);
+  res.json({ ok: true });
 });
 
 router.get('/units', authRequired, (_req, res) => {

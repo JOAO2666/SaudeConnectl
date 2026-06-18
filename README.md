@@ -10,6 +10,11 @@ pinned: false
 
 # SaúdeConnect
 
+[![React](https://img.shields.io/badge/React-19-149eca?logo=react)](https://react.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-Express-3c873a?logo=node.js)](https://nodejs.org/)
+[![Hugging Face Spaces](https://img.shields.io/badge/Hugging%20Face-Spaces-ffcc4d?logo=huggingface)](https://huggingface.co/spaces/Joaoemanuel2666/SaudeConnectl)
+[![Auth](https://img.shields.io/badge/Auth-JWT%20%2B%20Google%20OAuth-0f8b8d)](#autenticacao-e-seguranca)
+
 Aplicação full-stack para integração em saúde, com portal do paciente, painel administrativo, mapa interativo, API segura e versão Android via Capacitor.
 
 ## O que foi implementado
@@ -32,6 +37,21 @@ Aplicação full-stack para integração em saúde, com portal do paciente, pain
 - JWT, bcryptjs, zod, Helmet e express-rate-limit.
 - Capacitor Android para empacotamento mobile.
 - Puppeteer Core para smoke test visual local.
+
+## Autenticacao e seguranca
+
+O projeto nao depende de Supabase. Ele usa um sistema de autenticacao proprio no back-end, com comportamento semelhante ao que um BaaS oferece para este caso:
+
+- Cadastro por e-mail e senha com validacao de senha forte.
+- Senhas criptografadas com `bcryptjs`; a senha original nunca e salva.
+- Login local com JWT assinado por `JWT_SECRET`.
+- Sessao registrada no banco em `auth_sessions`, com `jti`, data de expiracao, IP e user-agent.
+- Logout com revogacao da sessao no servidor.
+- Google OAuth funcional para criar usuario comum automaticamente no primeiro acesso.
+- Separacao de permissoes por `role`, mantendo a area admin protegida por `adminRequired`.
+- Rate limit, Helmet, CORS configuravel e validacao de entrada com `zod`.
+
+Para producao, configure um `JWT_SECRET` forte, mantenha `GOOGLE_CLIENT_SECRET` como segredo do ambiente e use armazenamento persistente em `DATA_DIR`.
 
 ## Rodar localmente
 
@@ -60,6 +80,8 @@ Copie `.env.example` para `.env` se quiser configurar segredos reais.
 ```txt
 PORT=3001
 JWT_SECRET=troque-este-segredo
+JWT_TTL=7d
+DATA_DIR=./data
 CLIENT_ORIGIN=http://localhost:5173,http://localhost:3001
 CLIENT_URL=http://localhost:5173
 GOOGLE_CLIENT_ID=

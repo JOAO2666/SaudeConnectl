@@ -298,6 +298,9 @@ function LoginPage() {
                 />
               </span>
             </label>
+            {mode === 'register' && (
+              <small className="field-hint">Use pelo menos 10 caracteres com letra maiuscula, minuscula, numero e simbolo.</small>
+            )}
 
             {message && <div className="form-message error">{message}</div>}
 

@@ -92,7 +92,8 @@ app.use((req, res, next) => {
 
 app.use((error, _req, res, _next) => {
   if (error?.issues) {
-    return res.status(400).json({ message: 'Dados invalidos.', details: error.issues });
+    const firstMessage = error.issues.find((issue) => issue?.message)?.message;
+    return res.status(400).json({ message: firstMessage || 'Dados invalidos.', details: error.issues });
   }
 
   if (error?.message?.includes('CORS')) {

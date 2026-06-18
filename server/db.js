@@ -42,6 +42,21 @@ export function initDb() {
       last_login TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_id ON auth_sessions(token_id);
+
     CREATE TABLE IF NOT EXISTS units (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

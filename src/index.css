@@ -380,6 +380,14 @@ label span:focus-within {
   box-shadow: 0 0 0 4px rgba(15, 139, 141, 0.12);
 }
 
+.field-hint {
+  display: block;
+  margin-top: -10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .primary-action,
 .google-button {
   display: inline-flex;

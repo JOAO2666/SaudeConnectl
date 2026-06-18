@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "start": "node server/index.js",
     "preview": "npm run build && node server/index.js",
+    "screenshots": "node scripts/generate-marketing-screenshots.mjs",
     "mobile:sync": "npm run build && npx cap sync android",
     "mobile:add": "npm run build && npx cap add android",
     "mobile:apk": "npm run mobile:sync && cd android && gradlew assembleDebug"

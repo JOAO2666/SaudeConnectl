@@ -10,7 +10,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      HF_SPACE_ID: ${{ vars.HF_SPACE_ID || 'Joaoemanuel2666/SaudeConnectl' }}
+      HF_SPACE_ID: ${{ vars.HF_SPACE_ID || 'Joaoemanuel2666/SaudeConnect-Web' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

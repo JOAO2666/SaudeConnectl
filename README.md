@@ -12,7 +12,7 @@ pinned: false
 
 [![React](https://img.shields.io/badge/React-19-149eca?logo=react)](https://react.dev/)
 [![Node.js](https://img.shields.io/badge/Node.js-Express-3c873a?logo=node.js)](https://nodejs.org/)
-[![Hugging Face Spaces](https://img.shields.io/badge/Hugging%20Face-Spaces-ffcc4d?logo=huggingface)](https://huggingface.co/spaces/Joaoemanuel2666/SaudeConnectl)
+[![Hugging Face Spaces](https://img.shields.io/badge/Hugging%20Face-Spaces-ffcc4d?logo=huggingface)](https://huggingface.co/spaces/Joaoemanuel2666/SaudeConnect-Web)
 [![Auth](https://img.shields.io/badge/Auth-JWT%20%2B%20Google%20OAuth-0f8b8d)](#autenticacao-e-seguranca)
 
 Aplicação full-stack para integração em saúde, com portal do paciente, painel administrativo, mapa interativo, API segura e versão Android via Capacitor.
@@ -30,6 +30,32 @@ Aplicação full-stack para integração em saúde, com portal do paciente, pain
 - API Node/Express com validacao, rate limit, Helmet, CORS e banco SQLite.
 - Dados iniciais para testar o produto imediatamente.
 - PWA manifest e projeto Android gerado com Capacitor.
+
+## Capturas do sistema
+
+| Login | Inicio |
+| --- | --- |
+| ![Tela de login](docs/screenshots/01-login-desktop.png) | ![Inicio do paciente](docs/screenshots/02-inicio-desktop.png) |
+
+| Mapa | Cadastro |
+| --- | --- |
+| ![Mapa de unidades](docs/screenshots/03-mapa-desktop.png) | ![Cadastro do cidadao](docs/screenshots/04-cadastro-desktop.png) |
+
+| Prontuarios | Triagem |
+| --- | --- |
+| ![Prontuarios](docs/screenshots/05-prontuarios-desktop.png) | ![Triagem](docs/screenshots/06-triagem-desktop.png) |
+
+| Fila | Administracao |
+| --- | --- |
+| ![Fila digital](docs/screenshots/07-fila-desktop.png) | ![Painel administrativo](docs/screenshots/08-admin-desktop.png) |
+
+As imagens de celular prontas para a Play Store ficam em `store-assets/google-play`.
+
+Arquivo editavel no Figma:
+
+```txt
+https://www.figma.com/design/kzGAK3I48gMUbqezc1fbdk
+```
 
 ## Tecnologias
 
@@ -122,7 +148,7 @@ Também há um workflow em `.github/workflows/deploy-huggingface.yml`. Para publ
 
 1. Crie um token no Hugging Face com permissão de escrita.
 2. No GitHub, adicione esse token em `Settings > Secrets and variables > Actions > Secrets` com o nome `HF_TOKEN`.
-3. Opcionalmente, adicione a variável `HF_SPACE_ID` com `Joaoemanuel2666/SaudeConnectl`.
+3. Opcionalmente, adicione a variável `HF_SPACE_ID` com `Joaoemanuel2666/SaudeConnect-Web`.
 4. Execute o workflow `Deploy Hugging Face Space`.
 
 Variáveis recomendadas no Space:
@@ -130,30 +156,32 @@ Variáveis recomendadas no Space:
 ```txt
 PORT=7860
 JWT_SECRET=troque-este-segredo
-CLIENT_URL=https://joaoemanuel2666-saudeconnectl.hf.space
-CLIENT_ORIGIN=https://joaoemanuel2666-saudeconnectl.hf.space
+CLIENT_URL=https://joaoemanuel2666-saudeconnect-web.hf.space
+CLIENT_ORIGIN=https://joaoemanuel2666-saudeconnect-web.hf.space
 GOOGLE_CLIENT_ID=seu-client-id-google
 GOOGLE_CLIENT_SECRET=seu-client-secret-google
-GOOGLE_CALLBACK_URL=https://joaoemanuel2666-saudeconnectl.hf.space/api/auth/google/callback
+GOOGLE_CALLBACK_URL=https://joaoemanuel2666-saudeconnect-web.hf.space/api/auth/google/callback
 ```
 
 No Google Cloud Console, adicione este redirect URI:
 
 ```txt
-https://joaoemanuel2666-saudeconnectl.hf.space/api/auth/google/callback
+https://joaoemanuel2666-saudeconnect-web.hf.space/api/auth/google/callback
 ```
 
-## Demo temporária
+## Demo online
 
-Foi aberta uma demo temporaria gratuita via Serveo:
+Versao publicada no Hugging Face Spaces:
 
 ```txt
-https://70fb40507cf9f3a5-168-194-106-72.serveousercontent.com
+https://joaoemanuel2666-saudeconnect-web.hf.space
 ```
 
-Essa URL funciona enquanto o servidor local e o processo do tunnel estiverem ativos nesta maquina.
+Repositorio do Space:
 
-Para publicar de forma permanente e gratuita, use Render, Railway, Fly.io ou um VPS gratuito/educacional para a API. O front pode ficar no mesmo servidor Express ou em Vercel/Netlify apontando `VITE_API_URL` para a API publica.
+```txt
+https://huggingface.co/spaces/Joaoemanuel2666/SaudeConnect-Web
+```
 
 ## Android APK
 
@@ -168,10 +196,10 @@ artifacts/SaudeConnect-demo-debug.apk
 Esse APK foi compilado com:
 
 ```txt
-VITE_API_URL=https://70fb40507cf9f3a5-168-194-106-72.serveousercontent.com/api
+VITE_API_URL=https://joaoemanuel2666-saudeconnect-web.hf.space/api
 ```
 
-Logo, ele autentica e carrega dados enquanto a demo temporaria estiver online.
+Logo, ele autentica e carrega dados enquanto a demo do Hugging Face estiver online.
 
 Para gerar outro APK:
 

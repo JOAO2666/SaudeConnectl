@@ -63,7 +63,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(payload.user);
       return payload.user;
     } catch {
-      logout();
+      if (localStorage.getItem(storageKey) === currentToken) {
+        logout();
+      }
       return null;
     } finally {
       setLoading(false);

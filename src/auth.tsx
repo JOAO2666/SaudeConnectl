@@ -41,14 +41,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return nextUser;
   }, []);
 
-  const logout = useCallback(() => {
-    if (localStorage.getItem(storageKey)) {
-      void api('/auth/logout', { method: 'POST' }).catch(() => undefined);
-    }
+  const clearLocalSession = useCallback(() => {
     localStorage.removeItem(storageKey);
     setToken(null);
     setUser(null);
   }, []);
+
+  const logout = useCallback(() => {
+    if (localStorage.getItem(storageKey)) {
+      void api('/auth/logout', { method: 'POST' }).catch(() => undefined);
+    }
+    clearLocalSession();
+  }, [clearLocalSession]);
 
   const refresh = useCallback(async () => {
     const currentToken = localStorage.getItem(storageKey);
@@ -64,13 +68,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return payload.user;
     } catch {
       if (localStorage.getItem(storageKey) === currentToken) {
-        logout();
+        clearLocalSession();
       }
       return null;
     } finally {
       setLoading(false);
     }
-  }, [logout]);
+  }, [clearLocalSession]);
 
   useEffect(() => {
     void refresh();

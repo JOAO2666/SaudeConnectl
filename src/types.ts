@@ -186,6 +186,7 @@ export type AdminPayload = {
   triage: TriageCase[];
   queue: QueueEntry[];
   integrations: Integration[];
+  announcements: Announcement[];
   auditLogs: AuditLog[];
 };
 

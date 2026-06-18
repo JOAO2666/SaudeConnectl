@@ -8,12 +8,14 @@ import {
   ChevronRight,
   CircleUserRound,
   ClipboardList,
+  Download,
   FileText,
   HeartPulse,
   Hospital,
   KeyRound,
   LayoutDashboard,
   ListChecks,
+  Megaphone,
   LockKeyhole,
   LogOut,
   Mail,
@@ -21,12 +23,15 @@ import {
   Navigation,
   Plus,
   RefreshCw,
+  Search,
   Save,
   ShieldCheck,
   Stethoscope,
+  UserCog,
   UserPlus,
   UsersRound,
   Wifi,
+  Wrench,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { MapContainer, Marker, Popup, TileLayer, ZoomControl } from 'react-leaflet';
@@ -47,6 +52,7 @@ import type {
   TriageCase,
   TriageRisk,
   TriageStatus,
+  TicketStatus,
   Unit,
   User,
 } from './types';
@@ -796,40 +802,131 @@ function QueuePage({ onCreated, queue, units }: { onCreated: () => Promise<void>
 function AdminDashboard() {
   const [data, setData] = useState<AdminPayload | null>(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [query, setQuery] = useState('');
+  const [announcement, setAnnouncement] = useState({ title: '', body: '', audience: 'all' });
 
-  const load = () =>
-    api<AdminPayload>('/admin/overview')
+  const load = () => {
+    setError('');
+    return api<AdminPayload>('/admin/overview')
       .then(setData)
       .catch((err) => setError(err instanceof Error ? err.message : 'Erro ao carregar administração.'));
+  };
 
   useEffect(() => {
     void load();
   }, []);
 
+  async function mutate(path: string, body: Record<string, unknown>, successMessage: string) {
+    setError('');
+    setNotice('');
+    try {
+      await api(path, { method: 'PATCH', body });
+      setNotice(successMessage);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível concluir a operação.');
+    }
+  }
+
   async function updateAppointment(id: string, status: AppointmentStatus) {
-    await api(`/admin/appointments/${id}`, { method: 'PATCH', body: { status } });
-    await load();
+    await mutate(`/admin/appointments/${id}`, { status }, 'Agendamento atualizado.');
   }
 
   async function updateTriage(id: string, status: TriageStatus) {
-    await api(`/admin/triage/${id}`, { method: 'PATCH', body: { status } });
-    await load();
+    await mutate(`/admin/triage/${id}`, { status }, 'Triagem atualizada.');
   }
 
   async function updateQueue(id: string, status: QueueStatus) {
-    await api(`/admin/queue/${id}`, { method: 'PATCH', body: { status } });
-    await load();
+    await mutate(`/admin/queue/${id}`, { status }, 'Fila atualizada.');
   }
 
   async function updateIntegration(id: string, status: Integration['status']) {
-    await api(`/admin/integrations/${id}`, { method: 'PATCH', body: { status } });
-    await load();
+    await mutate(`/admin/integrations/${id}`, { status }, 'Integração atualizada.');
   }
+
+  async function updateTicket(id: string, status: TicketStatus) {
+    await mutate(`/admin/tickets/${id}`, { status }, 'Chamado atualizado.');
+  }
+
+  async function updateUserRole(id: string, role: User['role']) {
+    await mutate(`/admin/users/${id}/role`, { role }, 'Permissão atualizada.');
+  }
+
+  async function publishAnnouncement(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError('');
+    setNotice('');
+    try {
+      await api('/admin/announcements', { method: 'POST', body: announcement });
+      setAnnouncement({ title: '', body: '', audience: 'all' });
+      setNotice('Aviso publicado para o portal.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível publicar o aviso.');
+    }
+  }
+
+  function exportAdminReport() {
+    if (!data) return;
+    const rows = [
+      ['categoria', 'nome', 'detalhe', 'status'],
+      ...data.appointments.map((item) => ['agendamento', item.user_name || '', item.specialty, item.status]),
+      ...data.triage.map((item) => ['triagem', item.user_name || '', item.symptoms, item.status]),
+      ...data.queue.map((item) => ['fila', item.user_name || '', item.service, item.status]),
+      ...data.tickets.map((item) => ['chamado', item.user_name || '', item.subject, item.status]),
+    ];
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(';')).join('\n');
+    const url = URL.createObjectURL(new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `saudeconnect-relatorio-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const normalizedQuery = query.trim().toLocaleLowerCase('pt-BR');
+  const matches = (...values: Array<string | number | undefined | null>) =>
+    !normalizedQuery || values.some((value) => String(value || '').toLocaleLowerCase('pt-BR').includes(normalizedQuery));
+  const networkHealth = data?.integrations.length
+    ? Math.round(data.integrations.reduce(
+        (total, item) => total + (item.status === 'online' ? 100 : item.status === 'degraded' ? 70 : 20),
+        0,
+      ) / data.integrations.length)
+    : 0;
+  const visibleAppointments = data?.appointments.filter((item) =>
+    matches(item.user_name, item.user_email, item.specialty, item.unit_name, item.status),
+  ) || [];
+  const visibleTriage = data?.triage.filter((item) => matches(item.user_name, item.symptoms, item.status)) || [];
+  const visibleQueue = data?.queue.filter((item) => matches(item.user_name, item.service, item.unit_name, item.status)) || [];
+  const visibleUsers = data?.users.filter((item) => matches(item.name, item.email, item.role, item.provider)) || [];
+  const visibleTickets = data?.tickets.filter((item) => matches(item.user_name, item.subject, item.message, item.status)) || [];
 
   if (!data) return <DashboardShell title="Administração">{error ? <EmptyState message={error} /> : <PanelLoader />}</DashboardShell>;
 
   return (
     <DashboardShell title="Administração" subtitle="Operação, demanda, triagem, fila e integrações em tempo real.">
+      <section className="admin-toolbar" aria-label="Ferramentas administrativas">
+        <label className="admin-search">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Buscar paciente, unidade, serviço ou status"
+          />
+        </label>
+        <button className="admin-tool-button" type="button" onClick={() => void load()} title="Atualizar dados">
+          <RefreshCw size={18} />
+          Atualizar
+        </button>
+        <button className="admin-tool-button primary" type="button" onClick={exportAdminReport}>
+          <Download size={18} />
+          Exportar CSV
+        </button>
+      </section>
+
+      {(notice || error) && <div className={`admin-feedback ${error ? 'error' : ''}`}>{error || notice}</div>}
+
       <section className="metrics-grid">
         <MetricCard icon={<UsersRound />} label="Usuários" value={data.overview.users} tone="blue" />
         <MetricCard icon={<CalendarDays />} label="Agendamentos" value={data.overview.appointments} tone="green" />
@@ -837,9 +934,70 @@ function AdminDashboard() {
         <MetricCard icon={<ListChecks />} label="Fila aguardando" value={data.overview.queueWaiting} tone="purple" />
       </section>
 
+      <section className="admin-overview-grid">
+        <article className="network-card">
+          <div className="network-card-header">
+            <div>
+              <span>Rede conectada</span>
+              <small>Saúde dos serviços integrados</small>
+            </div>
+            <strong>{networkHealth}%</strong>
+          </div>
+          <div className="network-bars" aria-label={`Saúde da rede: ${networkHealth}%`}>
+            {data.integrations.map((integration, index) => (
+              <i
+                className={`network-bar status-${integration.status}`}
+                key={integration.id}
+                style={{ height: `${48 + index * 11}px` }}
+                title={`${integration.name}: ${integration.status}`}
+              />
+            ))}
+          </div>
+          <div className="network-summary">
+            <div><Hospital size={18} /><strong>{data.overview.users}</strong><span>usuários</span></div>
+            <div><CalendarDays size={18} /><strong>{data.overview.appointments}</strong><span>agendamentos</span></div>
+            <div><Wrench size={18} /><strong>{data.overview.openTickets}</strong><span>chamados</span></div>
+          </div>
+        </article>
+
+        <form className="announcement-form" onSubmit={publishAnnouncement}>
+          <SectionHeader icon={<Megaphone />} title="Publicar aviso" />
+          <label>
+            Título
+            <input
+              value={announcement.title}
+              onChange={(event) => setAnnouncement((current) => ({ ...current, title: event.target.value }))}
+              placeholder="Ex.: Campanha de vacinação"
+              required
+            />
+          </label>
+          <label>
+            Mensagem
+            <textarea
+              value={announcement.body}
+              onChange={(event) => setAnnouncement((current) => ({ ...current, body: event.target.value }))}
+              placeholder="Escreva o aviso que aparecerá no portal"
+              required
+            />
+          </label>
+          <label>
+            Público
+            <select
+              value={announcement.audience}
+              onChange={(event) => setAnnouncement((current) => ({ ...current, audience: event.target.value }))}
+            >
+              <option value="all">Todos</option>
+              <option value="users">Usuários</option>
+              <option value="admins">Administradores</option>
+            </select>
+          </label>
+          <button className="primary-action" type="submit"><Megaphone size={18} />Publicar aviso</button>
+        </form>
+      </section>
+
       <section className="admin-grid">
         <AdminTable title="Agenda da rede" icon={<CalendarDays />}>
-          {data.appointments.map((appointment) => (
+          {visibleAppointments.map((appointment) => (
             <div className="admin-row" key={appointment.id}>
               <div>
                 <strong>{appointment.user_name}</strong>
@@ -857,10 +1015,11 @@ function AdminDashboard() {
               </select>
             </div>
           ))}
+          {!visibleAppointments.length && <div className="admin-empty">Nenhum agendamento encontrado.</div>}
         </AdminTable>
 
         <AdminTable title="Triagem" icon={<Stethoscope />} compact>
-          {data.triage.map((item) => (
+          {visibleTriage.map((item) => (
             <div className="admin-row" key={item.id}>
               <div>
                 <strong>{item.user_name}</strong>
@@ -873,12 +1032,13 @@ function AdminDashboard() {
               </select>
             </div>
           ))}
+          {!visibleTriage.length && <div className="admin-empty">Nenhuma triagem encontrada.</div>}
         </AdminTable>
       </section>
 
       <section className="admin-grid">
         <AdminTable title="Fila" icon={<ListChecks />}>
-          {data.queue.map((item) => (
+          {visibleQueue.map((item) => (
             <div className="admin-row" key={item.id}>
               <div>
                 <strong>#{item.position} - {item.user_name}</strong>
@@ -893,6 +1053,7 @@ function AdminDashboard() {
               </select>
             </div>
           ))}
+          {!visibleQueue.length && <div className="admin-empty">Nenhuma entrada de fila encontrada.</div>}
         </AdminTable>
 
         <AdminTable title="Integrações" icon={<Wifi />} compact>
@@ -911,6 +1072,69 @@ function AdminDashboard() {
                 <option value="degraded">Instável</option>
                 <option value="offline">Offline</option>
               </select>
+            </div>
+          ))}
+        </AdminTable>
+      </section>
+
+      <section className="admin-grid">
+        <AdminTable title="Usuários e permissões" icon={<UserCog />}>
+          {visibleUsers.map((item) => (
+            <div className="admin-row" key={item.id}>
+              <div>
+                <strong>{item.name}</strong>
+                <span>{item.email} - acesso {item.provider}</span>
+              </div>
+              <small>{item.last_login ? formatDate(item.last_login, false) : 'Sem acesso recente'}</small>
+              <select value={item.role} onChange={(event) => void updateUserRole(item.id, event.target.value as User['role'])}>
+                <option value="user">Usuário</option>
+                <option value="admin">Administrador</option>
+              </select>
+            </div>
+          ))}
+          {!visibleUsers.length && <div className="admin-empty">Nenhum usuário encontrado.</div>}
+        </AdminTable>
+
+        <AdminTable title="Chamados de suporte" icon={<ClipboardList />} compact>
+          {visibleTickets.map((item) => (
+            <div className="admin-row" key={item.id}>
+              <div>
+                <strong>{item.subject}</strong>
+                <span>{item.user_name} - {item.message}</span>
+              </div>
+              <StatusBadge status={item.priority === 'high' ? 'danger' : item.priority === 'medium' ? 'warn' : 'info'} />
+              <select value={item.status} onChange={(event) => void updateTicket(item.id, event.target.value as TicketStatus)}>
+                <option value="open">Aberto</option>
+                <option value="in_review">Em análise</option>
+                <option value="resolved">Resolvido</option>
+              </select>
+            </div>
+          ))}
+          {!visibleTickets.length && <div className="admin-empty">Nenhum chamado encontrado.</div>}
+        </AdminTable>
+      </section>
+
+      <section className="admin-grid">
+        <AdminTable title="Avisos publicados" icon={<Megaphone />} compact>
+          {data.announcements.map((item) => (
+            <div className="admin-row" key={item.id}>
+              <div>
+                <strong>{item.title}</strong>
+                <span>{item.body}</span>
+              </div>
+              <small>{item.audience} - {formatDate(item.published_at, false)}</small>
+            </div>
+          ))}
+        </AdminTable>
+
+        <AdminTable title="Atividade recente" icon={<ShieldCheck />} compact>
+          {data.auditLogs.map((item) => (
+            <div className="admin-row" key={item.id}>
+              <div>
+                <strong>{item.actor_name || 'Sistema'}</strong>
+                <span>{item.action} em {item.entity}</span>
+              </div>
+              <small>{formatDate(item.created_at, false)}</small>
             </div>
           ))}
         </AdminTable>

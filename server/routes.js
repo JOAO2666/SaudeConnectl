@@ -134,6 +134,16 @@ const statusSchema = z.object({
   status: z.string().min(2),
 });
 
+const roleSchema = z.object({
+  role: z.enum(['user', 'admin']),
+});
+
+const announcementSchema = z.object({
+  title: z.string().min(4, 'Informe um titulo com pelo menos 4 caracteres.').max(100),
+  body: z.string().min(10, 'Informe uma mensagem com pelo menos 10 caracteres.').max(500),
+  audience: z.enum(['all', 'users', 'admins']).default('all'),
+});
+
 router.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'SaudeConnect API', time: now() });
 });
@@ -562,6 +572,7 @@ router.get('/admin/overview', authRequired, adminRequired, (_req, res) => {
     `)
     .all();
   const integrations = db.prepare('SELECT * FROM integrations ORDER BY name').all();
+  const announcements = db.prepare('SELECT * FROM announcements ORDER BY published_at DESC LIMIT 8').all();
   const auditLogs = db
     .prepare(`
       SELECT audit_logs.*, users.name AS actor_name
@@ -572,7 +583,46 @@ router.get('/admin/overview', authRequired, adminRequired, (_req, res) => {
     `)
     .all();
 
-  res.json({ overview, appointments, users, tickets, triage, queue, integrations, auditLogs });
+  res.json({ overview, appointments, users, tickets, triage, queue, integrations, announcements, auditLogs });
+});
+
+router.patch('/admin/users/:id/role', authRequired, adminRequired, (req, res, next) => {
+  try {
+    const input = roleSchema.parse(req.body);
+    if (req.params.id === req.user.id && input.role !== 'admin') {
+      return res.status(400).json({ message: 'Voce nao pode remover sua propria permissao de administrador.' });
+    }
+
+    const result = db.prepare('UPDATE users SET role = ? WHERE id = ?').run(input.role, req.params.id);
+    if (result.changes === 0) return res.status(404).json({ message: 'Usuario nao encontrado.' });
+
+    logAudit(req.user.id, 'updated_role', 'users', req.params.id);
+    return res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post('/admin/announcements', authRequired, adminRequired, (req, res, next) => {
+  try {
+    const input = announcementSchema.parse(req.body);
+    const announcement = {
+      id: crypto.randomUUID(),
+      title: input.title.trim(),
+      body: input.body.trim(),
+      audience: input.audience,
+      published_at: now(),
+    };
+
+    db.prepare(`
+      INSERT INTO announcements (id, title, body, audience, published_at)
+      VALUES (@id, @title, @body, @audience, @published_at)
+    `).run(announcement);
+    logAudit(req.user.id, 'published', 'announcements', announcement.id);
+    return res.status(201).json({ announcement });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 router.patch('/admin/appointments/:id', authRequired, adminRequired, (req, res, next) => {

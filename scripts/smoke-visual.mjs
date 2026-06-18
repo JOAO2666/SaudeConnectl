@@ -36,19 +36,6 @@ async function hasOverflow() {
   );
 }
 
-async function clickText(selector, text) {
-  await page.evaluate(
-    ({ selector: query, text: label }) => {
-      const element = [...document.querySelectorAll(query)].find((node) =>
-        node.textContent?.includes(label),
-      );
-      if (!(element instanceof HTMLElement)) throw new Error(`Elemento nao encontrado: ${label}`);
-      element.click();
-    },
-    { selector, text },
-  );
-}
-
 await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle0' });
 await page.evaluate(() => localStorage.clear());
@@ -64,6 +51,8 @@ try {
 await save('login-desktop.png');
 if (await hasOverflow()) issues.push('Overflow horizontal na tela de login desktop.');
 
+await page.type('input[type="email"]', 'paciente@saudeconnect.com');
+await page.type('input[type="password"]', 'Paciente@12345');
 await page.click('.primary-action');
 await page.waitForSelector('.app-shell', { timeout: 15000 });
 await save('paciente-desktop.png');
@@ -83,7 +72,8 @@ if (await hasOverflow()) issues.push('Overflow horizontal no painel do paciente 
 await page.evaluate(() => localStorage.clear());
 await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle0' });
-await clickText('button', 'Usar admin demo');
+await page.type('input[type="email"]', 'admin@saudeconnect.com');
+await page.type('input[type="password"]', 'Admin@12345');
 await page.click('.primary-action');
 await page.waitForSelector('.admin-panel', { timeout: 15000 });
 await save('admin-desktop.png');

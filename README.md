@@ -22,7 +22,7 @@ Aplicação full-stack para integração em saúde, com portal do paciente, pain
 - Mapa gratuito com OpenStreetMap e Leaflet.
 - Painel admin com usuarios, agendamentos, triagem, fila, integrações e auditoria.
 - API Node/Express com validacao, rate limit, Helmet, CORS e banco SQLite.
-- Dados demo iniciais para testar o produto imediatamente.
+- Dados iniciais para testar o produto imediatamente.
 - PWA manifest e projeto Android gerado com Capacitor.
 
 ## Tecnologias
@@ -32,22 +32,6 @@ Aplicação full-stack para integração em saúde, com portal do paciente, pain
 - JWT, bcryptjs, zod, Helmet e express-rate-limit.
 - Capacitor Android para empacotamento mobile.
 - Puppeteer Core para smoke test visual local.
-
-## Contas demo
-
-Paciente:
-
-```txt
-paciente@saudeconnect.com
-Paciente@12345
-```
-
-Administrador:
-
-```txt
-admin@saudeconnect.com
-Admin@12345
-```
 
 ## Rodar localmente
 

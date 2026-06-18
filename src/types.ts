@@ -191,8 +191,4 @@ export type AdminPayload = {
 
 export type BootstrapPayload = {
   googleEnabled: boolean;
-  demo: {
-    user: { email: string; password: string };
-    admin: { email: string; password: string };
-  };
 };

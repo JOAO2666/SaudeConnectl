@@ -149,13 +149,14 @@ function AuthCallback() {
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('token');
+    const isNewUser = new URLSearchParams(window.location.search).get('newUser') === '1';
     if (!token) {
       navigate('/login', { replace: true });
       return;
     }
 
     consumeToken(token)
-      .then((user) => navigate(user.role === 'admin' ? '/admin' : '/app', { replace: true }))
+      .then((user) => navigate(user.role === 'admin' ? '/admin' : isNewUser ? '/app/triagem' : '/app', { replace: true }))
       .catch(() => navigate('/login', { replace: true }));
   }, [consumeToken, navigate]);
 
@@ -167,9 +168,9 @@ function LoginPage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
-  const [name, setName] = useState('Marina Costa');
-  const [email, setEmail] = useState('paciente@saudeconnect.com');
-  const [password, setPassword] = useState('Paciente@12345');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -187,20 +188,12 @@ function LoginPage() {
         mode === 'login'
           ? await login({ email, password })
           : await register({ name, email, password });
-      navigate(user.role === 'admin' ? '/admin' : '/app', { replace: true });
+      navigate(user.role === 'admin' ? '/admin' : mode === 'register' ? '/app/triagem' : '/app', { replace: true });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Falha ao autenticar.');
     } finally {
       setBusy(false);
     }
-  }
-
-  function fillDemo(kind: 'user' | 'admin') {
-    const demo = bootstrap?.demo[kind];
-    if (!demo) return;
-    setMode('login');
-    setEmail(demo.email);
-    setPassword(demo.password);
   }
 
   return (
@@ -324,14 +317,6 @@ function LoginPage() {
             )}
           </div>
 
-          <div className="demo-actions">
-            <button type="button" onClick={() => fillDemo('user')}>
-              Usar paciente demo
-            </button>
-            <button type="button" onClick={() => fillDemo('admin')}>
-              Usar admin demo
-            </button>
-          </div>
         </div>
       </section>
     </main>

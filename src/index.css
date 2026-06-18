@@ -270,7 +270,6 @@ p {
 }
 
 .segmented button,
-.demo-actions button,
 .user-pill button {
   border: 0;
   background: transparent;
@@ -424,27 +423,11 @@ label span:focus-within {
 }
 
 .oauth-area small,
-.demo-actions button,
 .section-header small,
 .appointment-card small,
 .admin-row small,
 .audit-box small {
   color: var(--muted);
-}
-
-.demo-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 18px;
-}
-
-.demo-actions button {
-  flex: 1;
-  min-height: 40px;
-  border-radius: 12px;
-  background: #edf5f3;
-  color: var(--teal-dark);
-  font-weight: 800;
 }
 
 .form-message {
@@ -1225,7 +1208,6 @@ label span:focus-within {
     border-radius: 22px;
   }
 
-  .demo-actions,
   .card-title-line {
     flex-direction: column;
     align-items: stretch;

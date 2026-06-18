@@ -37,7 +37,9 @@ if (googleEnabled) {
               'UPDATE users SET google_id = ?, provider = ?, avatar = COALESCE(avatar, ?), last_login = ? WHERE id = ?',
             ).run(profile.id, 'google', initials(profile.displayName), now(), existing.id);
 
-            return done(null, db.prepare('SELECT * FROM users WHERE id = ?').get(existing.id));
+            const refreshed = db.prepare('SELECT * FROM users WHERE id = ?').get(existing.id);
+            logAudit(existing.id, 'logged_in_google', 'users', existing.id);
+            return done(null, { ...refreshed, is_new_user: false });
           }
 
           const user = {
@@ -53,7 +55,9 @@ if (googleEnabled) {
             VALUES (@id, @name, @email, NULL, 'user', @avatar, 'google', @google_id, @created_at, @last_login)
           `).run({ ...user, google_id: profile.id, last_login: user.created_at });
 
-          return done(null, db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
+          const created = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+          logAudit(user.id, 'registered_google', 'users', user.id);
+          return done(null, { ...created, is_new_user: true });
         } catch (error) {
           return done(error);
         }
@@ -122,10 +126,6 @@ router.get('/health', (_req, res) => {
 router.get('/bootstrap', (_req, res) => {
   res.json({
     googleEnabled,
-    demo: {
-      user: { email: 'paciente@saudeconnect.com', password: 'Paciente@12345' },
-      admin: { email: 'admin@saudeconnect.com', password: 'Admin@12345' },
-    },
   });
 });
 
@@ -199,7 +199,9 @@ router.get(
     const forwardedProto = req.get('x-forwarded-proto') || req.protocol;
     const forwardedHost = req.get('x-forwarded-host') || req.get('host');
     const clientUrl = process.env.CLIENT_URL || `${forwardedProto}://${forwardedHost}`;
-    res.redirect(`${clientUrl}/auth/callback?token=${token}`);
+    const params = new URLSearchParams({ token });
+    if (req.user?.is_new_user) params.set('newUser', '1');
+    res.redirect(`${clientUrl}/auth/callback?${params.toString()}`);
   },
 );
 

@@ -77,6 +77,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [clearLocalSession]);
 
   useEffect(() => {
+    if (window.location.pathname === '/auth/callback') {
+      setLoading(false);
+      return;
+    }
+
     void refresh();
   }, [refresh]);
 

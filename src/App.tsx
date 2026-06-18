@@ -145,7 +145,6 @@ function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: 
 }
 
 function AuthCallback() {
-  const { consumeToken } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -156,10 +155,9 @@ function AuthCallback() {
       return;
     }
 
-    consumeToken(token)
-      .then((user) => navigate(user.role === 'admin' ? '/admin' : isNewUser ? '/app/triagem' : '/app', { replace: true }))
-      .catch(() => navigate('/login', { replace: true }));
-  }, [consumeToken, navigate]);
+    localStorage.setItem('saudeconnect.token', token);
+    window.location.replace(isNewUser ? '/app/triagem' : '/app');
+  }, [navigate]);
 
   return <FullPageLoader label="Conectando sua conta..." />;
 }

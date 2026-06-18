@@ -113,7 +113,7 @@ Também há um workflow em `.github/workflows/deploy-huggingface.yml`. Para publ
 
 1. Crie um token no Hugging Face com permissão de escrita.
 2. No GitHub, adicione esse token em `Settings > Secrets and variables > Actions > Secrets` com o nome `HF_TOKEN`.
-3. Opcionalmente, adicione a variável `HF_SPACE_ID` com `seu-usuario/SaudeConnectl`.
+3. Opcionalmente, adicione a variável `HF_SPACE_ID` com `Joaoemanuel2666/SaudeConnectl`.
 4. Execute o workflow `Deploy Hugging Face Space`.
 
 Variáveis recomendadas no Space:
@@ -121,17 +121,17 @@ Variáveis recomendadas no Space:
 ```txt
 PORT=7860
 JWT_SECRET=troque-este-segredo
-CLIENT_URL=https://SEU-SPACE.hf.space
-CLIENT_ORIGIN=https://SEU-SPACE.hf.space
+CLIENT_URL=https://joaoemanuel2666-saudeconnectl.hf.space
+CLIENT_ORIGIN=https://joaoemanuel2666-saudeconnectl.hf.space
 GOOGLE_CLIENT_ID=seu-client-id-google
 GOOGLE_CLIENT_SECRET=seu-client-secret-google
-GOOGLE_CALLBACK_URL=https://SEU-SPACE.hf.space/api/auth/google/callback
+GOOGLE_CALLBACK_URL=https://joaoemanuel2666-saudeconnectl.hf.space/api/auth/google/callback
 ```
 
 No Google Cloud Console, adicione este redirect URI:
 
 ```txt
-https://SEU-SPACE.hf.space/api/auth/google/callback
+https://joaoemanuel2666-saudeconnectl.hf.space/api/auth/google/callback
 ```
 
 ## Demo temporária

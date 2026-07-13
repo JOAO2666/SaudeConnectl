@@ -44,7 +44,6 @@ import type {
   AdminPayload,
   Announcement,
   Appointment,
-  AppointmentStatus,
   BootstrapPayload,
   DashboardPayload,
   Integration,
@@ -53,7 +52,6 @@ import type {
   QueueStatus,
   RecordItem,
   TriageCase,
-  TriageRisk,
   TicketStatus,
   Unit,
   User,
@@ -856,8 +854,6 @@ function RecordsPage({
 function TriagePage({
   isAdminView = false,
   onCreated,
-  triage,
-  users,
   queue,
 }: {
   isAdminView?: boolean;
@@ -901,7 +897,7 @@ function TriagePage({
     }
   }
 
-  const queueWaitingTriage = queue?.filter(q => q.status === 'waiting_triage' || q.status === 'Aguardando Triagem') || [];
+  const queueWaitingTriage = queue?.filter(q => q.status === 'waiting_triage') || [];
 
   return (
     <section className="content-grid">
@@ -1044,7 +1040,7 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
               <p>{item.unit_name}</p>
               {item.chief_complaint && <p style={{fontSize: '0.85em', margin: '4px 0'}}>Queixa: {item.chief_complaint}</p>}
               <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min estimados`}</small>
-              <StatusBadge status={item.status === 'Triagem realizada' && item.triage_color ? `Triagem realizada - ${item.triage_color}` : item.status} />
+              <StatusBadge status={item.status === 'waiting_service' && item.triage_color ? `Triagem realizada - ${item.triage_color}` : item.status} />
             </article>
           ))}
         </div>
@@ -1138,9 +1134,7 @@ function AdminDashboard() {
     }
   }
 
-  async function updateAppointment(id: string, status: AppointmentStatus) {
-    await mutate(`/admin/appointments/${id}`, { status }, 'Agendamento atualizado.');
-  }
+
 
   async function deleteAppointment(id: string) {
     if (!confirm('Tem certeza que deseja excluir este agendamento?')) return;
@@ -1385,8 +1379,8 @@ function AdminDashboard() {
               </div>
               <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min`}</small>
               <select value={item.status} onChange={(event) => void updateQueue(item.id, event.target.value as QueueStatus)}>
-                <option value="Aguardando Triagem">Aguardando Triagem</option>
-                <option value="Triagem realizada">Triagem realizada</option>
+                <option value="waiting_triage">Aguardando Triagem</option>
+                <option value="waiting_service">Triagem realizada</option>
                 <option value="done">Finalizado</option>
                 <option value="cancelled">Cancelado</option>
               </select>

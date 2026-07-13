@@ -257,8 +257,8 @@ function seedDb() {
       status: 'Aberto',
       distance_km: 1.0,
       hours: '24 horas',
-      lat: -9.3896381,
-      lng: -40.5216397,
+      lat: -9.381335,
+      lng: -40.485121,
       services: ['Emergencia', 'Triagem', 'Enfermagem'],
     },
     {

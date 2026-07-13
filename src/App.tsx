@@ -796,12 +796,12 @@ function RecordsPage({
               {isAdminView && !('requested_at' in item) && (
                 <button 
                   type="button"
-                  className="icon-danger" 
+                  className="danger-action" 
                   title="Excluir"
                   onClick={() => void deleteRecord(item.id)}
-                  style={{ marginLeft: 16 }}
+                  style={{ marginLeft: 16, height: 32, padding: '0 12px', fontSize: '0.85rem' }}
                 >
-                  <Trash2 size={16} />
+                  <Trash2 size={14} /> Excluir
                 </button>
               )}
             </div>
@@ -1013,7 +1013,7 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
       return;
     }
     try {
-      await api('/queue', { method: 'POST', body: { unitId: targetUnitId, service, chiefComplaint, user_id: userId || undefined } });
+      await api('/queue', { method: 'POST', body: { unitId: targetUnitId, service, chiefComplaint, userId } });
       setMessage('Entrada adicionada à fila digital.');
       await onCreated();
     } catch (error) {
@@ -1344,11 +1344,12 @@ function AdminDashboard() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <StatusBadge status={appointment.status} />
                 <button 
-                  className="icon-danger" 
+                  className="danger-action" 
                   title="Excluir"
                   onClick={() => void deleteAppointment(appointment.id)}
+                  style={{ height: 32, padding: '0 12px', fontSize: '0.85rem' }}
                 >
-                  <Trash2 size={18} />
+                  <Trash2 size={14} /> Excluir
                 </button>
               </div>
             </div>
@@ -1388,6 +1389,8 @@ function AdminDashboard() {
           ))}
           {!visibleQueue.length && <div className="admin-empty">Nenhuma entrada de fila encontrada.</div>}
         </AdminTable>
+
+        <AdminQueueForm units={data.units} users={data.users} onCreated={() => load()} />
 
 
         <AdminTable title="Integrações" icon={<Wifi />} compact>
@@ -1725,6 +1728,63 @@ function BrandLockup({ small = false }: { small?: boolean }) {
         <span>Sistema Integrado</span>
       </div>
     </div>
+  );
+}
+
+function AdminQueueForm({ units, users, onCreated }: { units: any[]; users: { id: string; name: string; email: string }[]; onCreated: () => Promise<void> }) {
+  const [userId, setUserId] = useState(users[0]?.id || '');
+  const [unitId, setUnitId] = useState(units[0]?.id || '');
+  const [service, setService] = useState('Clínica geral');
+  const [chiefComplaint, setChiefComplaint] = useState('');
+  const [message, setMessage] = useState('');
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage('');
+    try {
+      await api('/queue', { method: 'POST', body: { userId, unitId, service, chiefComplaint } });
+      setMessage('Paciente adicionado à fila com sucesso.');
+      await onCreated();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Falha ao adicionar à fila.');
+    }
+  }
+
+  return (
+    <form className="admin-form" onSubmit={submit}>
+      <h4>Adicionar Paciente à Fila</h4>
+      <div className="form-group">
+        <label>Paciente</label>
+        <select value={userId} onChange={(e) => setUserId(e.target.value)}>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+          ))}
+        </select>
+      </div>
+      <div className="form-group">
+        <label>Unidade</label>
+        <select value={unitId} onChange={(e) => setUnitId(e.target.value)}>
+          {units.map((u) => (
+            <option key={u.id} value={u.id}>{u.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="form-group">
+        <label>Serviço</label>
+        <select value={service} onChange={(e) => setService(e.target.value)}>
+          <option>Clínica geral</option>
+          <option>Pediatria</option>
+          <option>Ortopedia</option>
+          <option>Odontologia</option>
+        </select>
+      </div>
+      <div className="form-group">
+        <label>Queixa Principal</label>
+        <input type="text" value={chiefComplaint} onChange={(e) => setChiefComplaint(e.target.value)} required />
+      </div>
+      <button type="submit" className="primary-action">Adicionar à Fila</button>
+      {message && <p className="form-message">{message}</p>}
+    </form>
   );
 }
 

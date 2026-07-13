@@ -501,7 +501,7 @@ router.post('/queue', authRequired, adminRequired, (req, res, next) => {
     if (!unit) return res.status(404).json({ message: 'Unidade não encontrada.' });
 
     const nextPosition =
-      db.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS next FROM queue_entries WHERE unit_id = ? AND status = 'Aguardando Triagem'")
+      db.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS next FROM queue_entries WHERE unit_id = ? AND status = 'waiting_triage'")
         .get(input.unitId).next || 1;
     
     const queueEntry = {
@@ -512,7 +512,7 @@ router.post('/queue', authRequired, adminRequired, (req, res, next) => {
       chief_complaint: input.chiefComplaint,
       position: nextPosition,
       estimated_minutes: nextPosition * 9 + 7,
-      status: 'Aguardando Triagem',
+      status: 'waiting_triage',
       created_at: now(),
     };
 
@@ -827,7 +827,7 @@ router.patch('/admin/triage/:id', authRequired, adminRequired, (req, res, next) 
 router.patch('/admin/queue/:id', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = statusSchema.parse(req.body);
-    if (!['waiting', 'called', 'done', 'cancelled'].includes(input.status)) {
+    if (!['waiting_triage', 'waiting_service', 'called', 'done', 'cancelled'].includes(input.status)) {
       return res.status(400).json({ message: 'Status de fila inválido.' });
     }
 

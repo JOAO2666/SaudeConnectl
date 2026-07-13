@@ -108,7 +108,7 @@ export type TriageCase = {
   creator_name?: string;
 };
 
-export type QueueStatus = 'Aguardando Triagem' | 'Triagem realizada' | 'done' | 'cancelled';
+export type QueueStatus = 'waiting_triage' | 'waiting_service' | 'called' | 'done' | 'cancelled';
 
 export type QueueEntry = {
   id: string;

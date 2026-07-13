@@ -371,7 +371,7 @@ function PortalPage({ page }: { page: PortalPageName }) {
       {page === 'map' && <MapPage units={data.units} />}
       {page === 'profile' && <ProfilePage profile={data.profile} onSaved={load} isAdminView={data.user.role === 'admin'} />}
       {page === 'records' && <RecordsPage records={data.records} exams={data.exams} onCreated={load} isAdminView={data.user.role === 'admin'} users={data.users} />}
-      {page === 'triage' && <TriagePage triage={data.triage} onCreated={load} isAdminView={data.user.role === 'admin'} users={data.users} />}
+      {page === 'triage' && <TriagePage triage={data.triage} onCreated={load} isAdminView={data.user.role === 'admin'} users={data.users} queue={data.queue} />}
       {page === 'queue' && <QueuePage queue={data.queue} onCreated={load} users={data.users} />}
     </DashboardShell>
   );
@@ -383,8 +383,12 @@ function HomePage({ data }: { data: DashboardPayload }) {
       <section className="metrics-grid">
         <MetricCard icon={<CalendarDays />} label="Próximas consultas" value={data.metrics.nextAppointments} tone="blue" />
         <MetricCard icon={<FileText />} label="Resultados disponíveis" value={data.metrics.availableResults} tone="green" />
-        <MetricCard icon={<Stethoscope />} label="Triagens ativas" value={data.metrics.activeTriage} tone="orange" />
-        <MetricCard icon={<ListChecks />} label="Posição na fila" value={data.metrics.queuePosition} tone="purple" />
+        {data.user.role === 'admin' && (
+          <>
+            <MetricCard icon={<Stethoscope />} label="Triagens ativas" value={data.metrics.activeTriage} tone="orange" />
+            <MetricCard icon={<ListChecks />} label="Posição na fila" value={data.metrics.queuePosition} tone="purple" />
+          </>
+        )}
       </section>
 
       <section className="content-grid">
@@ -753,14 +757,14 @@ function RecordsPage({
           </div>
         )}
 
-        <div className="tabs" style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+        <div className="tabs" style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
           {['Geral', 'Exames', 'Medicação', 'Procedimento Cirúrgico'].map(tab => (
             <button
               key={tab}
               type="button"
               className={`chip ${activeTab === tab ? 'active' : ''}`}
               onClick={() => setActiveTab(tab)}
-              style={{ background: activeTab === tab ? 'var(--primary)' : 'var(--surface-sunken)', color: activeTab === tab ? 'white' : 'var(--text)' }}
+              style={{ background: activeTab === tab ? 'var(--primary)' : 'var(--surface-sunken)', color: activeTab === tab ? 'white' : 'var(--text)', whiteSpace: 'nowrap', border: 'none', cursor: 'pointer', padding: '8px 12px' }}
             >
               {tab}
             </button>
@@ -830,88 +834,140 @@ function TriagePage({
   onCreated,
   triage,
   users,
+  queue,
 }: {
   isAdminView?: boolean;
   onCreated: () => Promise<void>;
   triage: TriageCase[];
   users?: DashboardPayload['users'];
+  queue?: QueueEntry[];
 }) {
-  const [symptoms, setSymptoms] = useState('Febre, dor no corpo e tosse há dois dias.');
-  const [riskLevel, setRiskLevel] = useState<TriageRisk>('medium');
+  const [triageQueueId, setTriageQueueId] = useState<string | null>(null);
+  const [triageData, setTriageData] = useState({
+    temperature: '',
+    sysBp: '',
+    diaBp: '',
+    heartRate: '',
+    respRate: '',
+    spo2: '',
+    glucose: '',
+    chiefComplaint: '',
+    manchesterColor: 'Verde' as const
+  });
   const [message, setMessage] = useState('');
-  const [userId, setUserId] = useState('');
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
+  async function submitTriage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!triageQueueId) return;
     setMessage('');
     try {
-      await api('/triage', { method: 'POST', body: { symptoms, riskLevel, user_id: userId || undefined } });
-      setMessage('Triagem registrada e enviada para a equipe.');
+      await api('/triage', { 
+        method: 'POST', 
+        body: { queueId: triageQueueId, ...triageData } 
+      });
+      setMessage('Triagem (Protocolo de Manchester) registrada com sucesso!');
+      setTriageQueueId(null);
+      setTriageData({
+        temperature: '', sysBp: '', diaBp: '', heartRate: '', respRate: '',
+        spo2: '', glucose: '', chiefComplaint: '', manchesterColor: 'Verde'
+      });
       await onCreated();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Falha ao registrar triagem.');
     }
   }
 
+  const queueWaitingTriage = queue?.filter(q => q.status === 'waiting_triage' || q.status === 'Aguardando Triagem') || [];
+
   return (
     <section className="content-grid">
       <div className="stack">
-        <SectionHeader icon={<Stethoscope />} title={isAdminView ? 'Triagens da rede' : 'Triagens recentes'} />
+        <SectionHeader icon={<Stethoscope />} title="Atendimentos aguardando triagem" />
         <div className="card-list">
-          {triage.map((item) => (
+          {queueWaitingTriage.map((item) => (
             <article className="appointment-card" key={item.id}>
               <span className="icon-tile">
                 <Activity size={20} />
               </span>
               <div>
                 <div className="card-title-line">
-                  <strong>
-                    {item.creator_name ? `Enviado por: ${item.creator_name} - ` : ''}
-                    {item.manchester_color}
-                  </strong>
-                  <StatusBadge status={item.status} />
+                  <strong>#{item.position} - {item.user_name}</strong>
+                  <StatusBadge status="Aguardando Triagem" />
                 </div>
-                <p>{item.chief_complaint}</p>
-                <small>{item.temperature} °C, PA: {item.sys_bp}/{item.dia_bp}</small>
-                {isAdminView && item.user_email && <small>{item.user_email}</small>}
+                <p>{item.service} - {item.unit_name}</p>
+                {item.chief_complaint && <p style={{fontSize: '0.85em'}}>Queixa: {item.chief_complaint}</p>}
+                {isAdminView && (
+                  <button className="secondary-action" style={{ marginTop: '8px' }} onClick={() => setTriageQueueId(item.id)}>
+                    Realizar Triagem
+                  </button>
+                )}
               </div>
             </article>
           ))}
-          {!triage.length && <div className="admin-empty">Nenhuma triagem registrada.</div>}
+          {!queueWaitingTriage.length && <div className="admin-empty">Nenhum paciente aguardando triagem.</div>}
         </div>
       </div>
-      <form className="action-panel" onSubmit={submit}>
-        <SectionHeader icon={<Plus />} title="Nova triagem" />
-        {isAdminView && users && (
-          <label>
-            Paciente
-            <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
-              <option value="">Selecione um paciente...</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
-              ))}
-            </select>
-          </label>
-        )}
-        <label>
-          Sintomas
-          <textarea value={symptoms} onChange={(event) => setSymptoms(event.target.value)} required />
-        </label>
-        <label>
-          Prioridade percebida
-          <select value={riskLevel} onChange={(event) => setRiskLevel(event.target.value as TriageRisk)}>
-            <option value="low">Baixa</option>
-            <option value="medium">Média</option>
-            <option value="high">Alta</option>
-            <option value="critical">Emergência</option>
-          </select>
-        </label>
-        {message && <div className="form-message">{message}</div>}
-        <button className="primary-action" type="submit">
-          <Stethoscope size={18} />
-          Enviar triagem
-        </button>
-      </form>
+
+      {triageQueueId && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <form className="action-panel" onSubmit={submitTriage} style={{ background: 'var(--surface)', padding: '24px', borderRadius: '8px', maxWidth: '600px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <SectionHeader icon={<Activity />} title="Realizar Triagem (Protocolo de Manchester)" />
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <label>
+                Temp. (°C)
+                <input required value={triageData.temperature} onChange={(e) => setTriageData({...triageData, temperature: e.target.value})} placeholder="36.5" />
+              </label>
+              <label>
+                Freq. Cardíaca (bpm)
+                <input required value={triageData.heartRate} onChange={(e) => setTriageData({...triageData, heartRate: e.target.value})} placeholder="80" />
+              </label>
+              <label>
+                PA Sistólica (mmHg)
+                <input required value={triageData.sysBp} onChange={(e) => setTriageData({...triageData, sysBp: e.target.value})} placeholder="120" />
+              </label>
+              <label>
+                PA Diastólica (mmHg)
+                <input required value={triageData.diaBp} onChange={(e) => setTriageData({...triageData, diaBp: e.target.value})} placeholder="80" />
+              </label>
+              <label>
+                Freq. Respiratória (irpm)
+                <input required value={triageData.respRate} onChange={(e) => setTriageData({...triageData, respRate: e.target.value})} placeholder="16" />
+              </label>
+              <label>
+                SpO2 (%)
+                <input required value={triageData.spo2} onChange={(e) => setTriageData({...triageData, spo2: e.target.value})} placeholder="98" />
+              </label>
+              <label>
+                Glicemia (mg/dL)
+                <input required value={triageData.glucose} onChange={(e) => setTriageData({...triageData, glucose: e.target.value})} placeholder="90" />
+              </label>
+              <label>
+                Classificação (Cor)
+                <select required value={triageData.manchesterColor} onChange={(e) => setTriageData({...triageData, manchesterColor: e.target.value as any})}>
+                  <option value="Azul">Azul (Não Urgente - 240m)</option>
+                  <option value="Verde">Verde (Pouco Urgente - 120m)</option>
+                  <option value="Amarelo">Amarelo (Urgente - 50m)</option>
+                  <option value="Laranja">Laranja (Muito Urgente - 10m)</option>
+                  <option value="Vermelho">Vermelho (Emergência - 0m)</option>
+                </select>
+              </label>
+            </div>
+
+            <label style={{ marginTop: '16px', display: 'block' }}>
+              Queixa Principal / Avaliação
+              <textarea required value={triageData.chiefComplaint} onChange={(e) => setTriageData({...triageData, chiefComplaint: e.target.value})} rows={3}></textarea>
+            </label>
+
+            {message && <div className="form-message">{message}</div>}
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+              <button type="submit" className="primary-action" style={{ flex: 1 }}>Salvar Triagem</button>
+              <button type="button" className="secondary-action" style={{ flex: 1 }} onClick={() => setTriageQueueId(null)}>Cancelar</button>
+            </div>
+          </form>
+        </div>
+      )}
     </section>
   );
 }
@@ -963,9 +1019,9 @@ function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>
           ))}
         </div>
       </div>
-      <form className="action-panel" onSubmit={submit}>
-        <SectionHeader icon={<Plus />} title="Adicionar paciente na fila" />
-        {users && (
+      {users && (
+        <form className="action-panel" onSubmit={submit}>
+          <SectionHeader icon={<Plus />} title="Adicionar paciente na fila" />
           <label>
             Paciente
             <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
@@ -975,21 +1031,21 @@ function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>
               ))}
             </select>
           </label>
-        )}
-        <label>
-          Serviço
-          <input value={service} onChange={(event) => setService(event.target.value)} required />
-        </label>
-        <label>
-          Motivo da Consulta
-          <input value={chiefComplaint} onChange={(event) => setChiefComplaint(event.target.value)} required />
-        </label>
-        {message && <div className="form-message">{message}</div>}
-        <button className="primary-action" type="submit">
-          <ListChecks size={18} />
-          Enviar à fila
-        </button>
-      </form>
+          <label>
+            Serviço
+            <input value={service} onChange={(event) => setService(event.target.value)} required />
+          </label>
+          <label>
+            Motivo da Consulta
+            <input value={chiefComplaint} onChange={(event) => setChiefComplaint(event.target.value)} required />
+          </label>
+          {message && <div className="form-message">{message}</div>}
+          <button className="primary-action" type="submit">
+            <Plus size={18} />
+            Entrar na fila
+          </button>
+        </form>
+      )}
     </section>
   );
 }
@@ -1006,19 +1062,6 @@ function AdminDashboard() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [unitFilter, setUnitFilter] = useState(() => sessionStorage.getItem('saudeconnect.unitFilter') || '');
 
-  // Triage state
-  const [triageQueueId, setTriageQueueId] = useState<string | null>(null);
-  const [triageData, setTriageData] = useState({
-    temperature: '',
-    sysBp: '',
-    diaBp: '',
-    heartRate: '',
-    respRate: '',
-    spo2: '',
-    glucose: '',
-    chiefComplaint: '',
-    manchesterColor: 'Verde' as const
-  });
 
   const load = (silent = false, specificUnit = unitFilter) => {
     if (!silent) setError('');
@@ -1062,27 +1105,6 @@ function AdminDashboard() {
     await mutate(`/admin/queue/${id}`, { status }, 'Fila atualizada.');
   }
 
-  async function submitTriage(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!triageQueueId) return;
-    setError('');
-    setNotice('');
-    try {
-      await api('/triage', { 
-        method: 'POST', 
-        body: { queueId: triageQueueId, ...triageData } 
-      });
-      setNotice('Triagem (Protocolo de Manchester) registrada com sucesso!');
-      setTriageQueueId(null);
-      setTriageData({
-        temperature: '', sysBp: '', diaBp: '', heartRate: '', respRate: '',
-        spo2: '', glucose: '', chiefComplaint: '', manchesterColor: 'Verde'
-      });
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao registrar triagem.');
-    }
-  }
 
   async function updateIntegration(id: string, status: Integration['status']) {
     await mutate(`/admin/integrations/${id}`, { status }, 'Integração atualizada.');
@@ -1260,13 +1282,7 @@ function AdminDashboard() {
                 <span>{appointment.specialty} - {appointment.unit_name}</span>
               </div>
               <small>{formatDate(appointment.scheduled_at)}</small>
-              <select
-                value={appointment.status}
-                onChange={(event) => void updateAppointment(appointment.id, event.target.value as AppointmentStatus)}
-              >
-                <option value="completed">Concluído</option>
-                <option value="cancelled">Cancelado</option>
-              </select>
+              <StatusBadge status={appointment.status} />
             </div>
           ))}
           {!visibleAppointments.length && <div className="admin-empty">Nenhum agendamento encontrado.</div>}
@@ -1293,13 +1309,7 @@ function AdminDashboard() {
                 <span>{item.service} - {item.unit_name}</span>
                 {item.chief_complaint && <span style={{display: 'block', fontSize: '0.85em', color: 'var(--text-muted)'}}>Queixa: {item.chief_complaint}</span>}
               </div>
-              <div>
                 <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min`}</small>
-                {item.status !== 'Triagem realizada' && item.status !== 'done' && item.status !== 'cancelled' && (
-                  <button className="secondary-action" style={{ display: 'block', marginTop: '4px', padding: '2px 8px', fontSize: '12px' }} onClick={() => setTriageQueueId(item.id)}>
-                    Realizar Triagem
-                  </button>
-                )}
               </div>
               <select value={item.status} onChange={(event) => void updateQueue(item.id, event.target.value as QueueStatus)}>
                 <option value="Aguardando Triagem">Aguardando Triagem</option>
@@ -1312,64 +1322,6 @@ function AdminDashboard() {
           {!visibleQueue.length && <div className="admin-empty">Nenhuma entrada de fila encontrada.</div>}
         </AdminTable>
 
-        {triageQueueId && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <form className="action-panel" onSubmit={submitTriage} style={{ background: 'var(--surface)', padding: '24px', borderRadius: '8px', maxWidth: '600px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
-              <SectionHeader icon={<Activity />} title="Realizar Triagem (Protocolo de Manchester)" />
-              
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <label>
-                  Temp. (°C)
-                  <input required value={triageData.temperature} onChange={(e) => setTriageData({...triageData, temperature: e.target.value})} placeholder="36.5" />
-                </label>
-                <label>
-                  Freq. Cardíaca (bpm)
-                  <input required value={triageData.heartRate} onChange={(e) => setTriageData({...triageData, heartRate: e.target.value})} placeholder="80" />
-                </label>
-                <label>
-                  PA Sistólica (mmHg)
-                  <input required value={triageData.sysBp} onChange={(e) => setTriageData({...triageData, sysBp: e.target.value})} placeholder="120" />
-                </label>
-                <label>
-                  PA Diastólica (mmHg)
-                  <input required value={triageData.diaBp} onChange={(e) => setTriageData({...triageData, diaBp: e.target.value})} placeholder="80" />
-                </label>
-                <label>
-                  Freq. Respiratória (irpm)
-                  <input required value={triageData.respRate} onChange={(e) => setTriageData({...triageData, respRate: e.target.value})} placeholder="16" />
-                </label>
-                <label>
-                  SpO2 (%)
-                  <input required value={triageData.spo2} onChange={(e) => setTriageData({...triageData, spo2: e.target.value})} placeholder="98" />
-                </label>
-                <label>
-                  Glicemia (mg/dL)
-                  <input required value={triageData.glucose} onChange={(e) => setTriageData({...triageData, glucose: e.target.value})} placeholder="90" />
-                </label>
-                <label>
-                  Classificação (Cor)
-                  <select required value={triageData.manchesterColor} onChange={(e) => setTriageData({...triageData, manchesterColor: e.target.value as any})}>
-                    <option value="Azul">Azul (Não Urgente - 240m)</option>
-                    <option value="Verde">Verde (Pouco Urgente - 120m)</option>
-                    <option value="Amarelo">Amarelo (Urgente - 50m)</option>
-                    <option value="Laranja">Laranja (Muito Urgente - 10m)</option>
-                    <option value="Vermelho">Vermelho (Emergência - 0m)</option>
-                  </select>
-                </label>
-              </div>
-
-              <label style={{ marginTop: '16px', display: 'block' }}>
-                Queixa Principal / Avaliação
-                <textarea required value={triageData.chiefComplaint} onChange={(e) => setTriageData({...triageData, chiefComplaint: e.target.value})} rows={3}></textarea>
-              </label>
-
-              <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-                <button type="submit" className="primary-action" style={{ flex: 1 }}>Salvar Triagem</button>
-                <button type="button" className="secondary-action" style={{ flex: 1 }} onClick={() => setTriageQueueId(null)}>Cancelar</button>
-              </div>
-            </form>
-          </div>
-        )}
 
         <AdminTable title="Integrações" icon={<Wifi />} compact>
           {data.integrations.map((integration) => (

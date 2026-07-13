@@ -327,7 +327,7 @@ router.get('/dashboard', authRequired, (req, res) => {
     req.user.role === 'admin' ? allRecords() : recordsForUser(req.user.id);
   const profile = profileForUser(req.user.id);
   const triage = req.user.role === 'admin' ? allTriageCases() : triageForUser(req.user.id);
-  const queue = queueForUser(req.user.id);
+  const queue = req.user.role === 'admin' ? allQueueEntries() : queueForUser(req.user.id);
   const tickets = db
     .prepare('SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC')
     .all(req.user.id);
@@ -479,7 +479,7 @@ router.post('/triage', authRequired, adminRequired, (req, res, next) => {
     // Update queue entry
     db.prepare(`
       UPDATE queue_entries 
-      SET status = 'Triagem realizada', triage_color = ?, triage_time = ?, deadline_time = ?
+      SET status = 'waiting_service', triage_color = ?, triage_time = ?, deadline_time = ?
       WHERE id = ?
     `).run(input.manchesterColor, triageTime, deadlineTime, input.queueId);
 
@@ -637,8 +637,8 @@ router.get('/admin/overview', authRequired, staffRequired, (req, res) => {
   }
 
   const queue = isSupport ? [] : (unitId
-    ? db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id WHERE queue_entries.unit_id = ? ORDER BY queue_entries.status = 'waiting' DESC, queue_entries.position ASC`).all(unitId)
-    : db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY queue_entries.status = 'waiting' DESC, queue_entries.position ASC`).all());
+    ? db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id WHERE queue_entries.unit_id = ? ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`).all(unitId)
+    : db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`).all());
 
   const integrations = db.prepare('SELECT * FROM integrations ORDER BY name').all();
   const announcements = db.prepare('SELECT * FROM announcements ORDER BY published_at DESC LIMIT 8').all();
@@ -916,6 +916,10 @@ function allRecords() {
     .all();
 }
 
+function allQueueEntries() {
+  return db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name, units.address AS unit_address FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`).all();
+}
+
 function queueForUser(userId) {
   return db
     .prepare(`
@@ -923,7 +927,7 @@ function queueForUser(userId) {
       FROM queue_entries
       JOIN units ON units.id = queue_entries.unit_id
       WHERE queue_entries.user_id = ?
-      ORDER BY queue_entries.status = 'waiting' DESC, queue_entries.created_at DESC
+      ORDER BY queue_entries.status IN ('waiting_triage', 'waiting_service') DESC, queue_entries.created_at DESC
     `)
     .all(userId);
 }

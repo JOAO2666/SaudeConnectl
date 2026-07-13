@@ -1320,8 +1320,7 @@ function AdminDashboard() {
                 <span>{item.service} - {item.unit_name}</span>
                 {item.chief_complaint && <span style={{display: 'block', fontSize: '0.85em', color: 'var(--text-muted)'}}>Queixa: {item.chief_complaint}</span>}
               </div>
-                <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min`}</small>
-              </div>
+              <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min`}</small>
               <select value={item.status} onChange={(event) => void updateQueue(item.id, event.target.value as QueueStatus)}>
                 <option value="Aguardando Triagem">Aguardando Triagem</option>
                 <option value="Triagem realizada">Triagem realizada</option>

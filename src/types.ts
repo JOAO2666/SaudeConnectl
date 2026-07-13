@@ -1,4 +1,4 @@
-export type Role = 'user' | 'admin';
+export type Role = 'user' | 'admin' | 'support';
 
 export type User = {
   id: string;
@@ -11,6 +11,9 @@ export type User = {
   created_at?: string;
   lastLogin?: string;
   last_login?: string;
+  lastSeen?: string | null;
+  last_seen?: string | null;
+  cpf?: string;
 };
 
 export type Unit = {
@@ -64,6 +67,9 @@ export type RecordItem = {
   title: string;
   description: string;
   created_at: string;
+  user_name?: string;
+  user_email?: string;
+  creator_name?: string;
 };
 
 export type PatientProfile = {
@@ -90,6 +96,7 @@ export type TriageCase = {
   created_at: string;
   user_name?: string;
   user_email?: string;
+  creator_name?: string;
 };
 
 export type QueueStatus = 'waiting' | 'called' | 'done' | 'cancelled';
@@ -169,6 +176,7 @@ export type DashboardPayload = {
   tickets: Ticket[];
   units: Unit[];
   announcements: Announcement[];
+  users?: { id: string; name: string; email: string }[];
 };
 
 export type AdminPayload = {
@@ -188,6 +196,8 @@ export type AdminPayload = {
   integrations: Integration[];
   announcements: Announcement[];
   auditLogs: AuditLog[];
+  records: RecordItem[];
+  units: Unit[];
 };
 
 export type BootstrapPayload = {

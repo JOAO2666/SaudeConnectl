@@ -6,7 +6,7 @@ import express from 'express';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { z } from 'zod';
-import { authRequired, adminRequired, revokeCurrentSession, signToken } from './auth.js';
+import { authRequired, adminRequired, staffRequired, revokeCurrentSession, signToken } from './auth.js';
 import { dataDir, db, logAudit, publicUser } from './db.js';
 
 const router = express.Router();
@@ -154,6 +154,17 @@ router.get('/bootstrap', (_req, res) => {
   });
 });
 
+router.get('/notifications', authRequired, (req, res) => {
+  const audiences =
+    req.user.role === 'admin' ? ['all', 'users', 'admins'] : ['all', 'users'];
+  const placeholders = audiences.map(() => '?').join(', ');
+  const announcements = db
+    .prepare(`SELECT * FROM announcements WHERE audience IN (${placeholders}) ORDER BY published_at DESC LIMIT 12`)
+    .all(...audiences);
+
+  res.json({ announcements });
+});
+
 router.post('/auth/register', (req, res, next) => {
   try {
     const input = registerSchema.parse(req.body);
@@ -198,6 +209,7 @@ router.post('/auth/login', (req, res, next) => {
     }
 
     db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(now(), user.id);
+    db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(now(), user.id);
     const refreshed = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
     logAudit(user.id, 'logged_in', 'users', user.id);
     return res.json({ user: publicUser(refreshed), token: signToken(refreshed, req) });
@@ -299,9 +311,10 @@ router.get('/units', authRequired, (_req, res) => {
 router.get('/dashboard', authRequired, (req, res) => {
   const appointments = appointmentsForUser(req.user.id);
   const exams = db.prepare('SELECT * FROM exams WHERE user_id = ? ORDER BY requested_at DESC').all(req.user.id);
-  const records = db.prepare('SELECT * FROM records WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
+  const records =
+    req.user.role === 'admin' ? allRecords() : recordsForUser(req.user.id);
   const profile = profileForUser(req.user.id);
-  const triage = triageForUser(req.user.id);
+  const triage = req.user.role === 'admin' ? allTriageCases() : triageForUser(req.user.id);
   const queue = queueForUser(req.user.id);
   const tickets = db
     .prepare('SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC')
@@ -310,6 +323,7 @@ router.get('/dashboard', authRequired, (req, res) => {
   const announcements = db
     .prepare("SELECT * FROM announcements WHERE audience IN ('all', 'users') ORDER BY published_at DESC LIMIT 4")
     .all();
+  const users = req.user.role === 'admin' ? db.prepare('SELECT id, name, email FROM users ORDER BY name ASC').all() : [];
 
   res.json({
     user: req.publicUser,
@@ -330,6 +344,7 @@ router.get('/dashboard', authRequired, (req, res) => {
     tickets,
     units,
     announcements,
+    users,
   });
 });
 
@@ -374,21 +389,23 @@ router.get('/records', authRequired, (req, res) => {
   res.json({ records });
 });
 
-router.post('/records', authRequired, (req, res, next) => {
+router.post('/records', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = recordSchema.parse(req.body);
+    const targetUserId = req.body.user_id || req.user.id;
     const record = {
       id: crypto.randomUUID(),
-      user_id: req.user.id,
+      user_id: targetUserId,
       category: input.category,
       title: input.title,
       description: input.description,
+      creator_name: req.user.name,
       created_at: now(),
     };
 
     db.prepare(`
-      INSERT INTO records (id, user_id, category, title, description, created_at)
-      VALUES (@id, @user_id, @category, @title, @description, @created_at)
+      INSERT INTO records (id, user_id, category, title, description, creator_name, created_at)
+      VALUES (@id, @user_id, @category, @title, @description, @creator_name, @created_at)
     `).run(record);
 
     logAudit(req.user.id, 'created', 'records', record.id);
@@ -402,23 +419,27 @@ router.get('/triage', authRequired, (req, res) => {
   res.json({ triage: triageForUser(req.user.id) });
 });
 
-router.post('/triage', authRequired, (req, res, next) => {
+router.post('/triage', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = triageSchema.parse(req.body);
     const recommendation = recommendationForRisk(input.riskLevel);
+    const targetUserId = req.body.user_id || req.user.id;
+    const unitId = req.body.unit_id || null;
     const triageCase = {
       id: crypto.randomUUID(),
-      user_id: req.user.id,
+      user_id: targetUserId,
       symptoms: input.symptoms,
       risk_level: input.riskLevel,
       status: input.riskLevel === 'critical' ? 'in_service' : 'waiting',
       recommendation,
+      creator_name: req.user.name,
+      unit_id: unitId,
       created_at: now(),
     };
 
     db.prepare(`
-      INSERT INTO triage_cases (id, user_id, symptoms, risk_level, status, recommendation, created_at)
-      VALUES (@id, @user_id, @symptoms, @risk_level, @status, @recommendation, @created_at)
+      INSERT INTO triage_cases (id, user_id, symptoms, risk_level, status, recommendation, creator_name, unit_id, created_at)
+      VALUES (@id, @user_id, @symptoms, @risk_level, @status, @recommendation, @creator_name, @unit_id, @created_at)
     `).run(triageCase);
 
     logAudit(req.user.id, 'created', 'triage_cases', triageCase.id);
@@ -523,67 +544,103 @@ router.post('/support', authRequired, (req, res, next) => {
   }
 });
 
-router.get('/admin/overview', authRequired, adminRequired, (_req, res) => {
-  const overview = {
+router.get('/admin/overview', authRequired, staffRequired, (req, res) => {
+  const isSupport = req.user.role === 'support';
+  const unitId = req.query.unit_id;
+
+  let overview = {
     users: count('users'),
-    appointments: count('appointments'),
     openTickets: db.prepare("SELECT COUNT(*) AS total FROM support_tickets WHERE status != 'resolved'").get().total,
     integrationsOnline: db.prepare("SELECT COUNT(*) AS total FROM integrations WHERE status = 'online'").get().total,
-    triageWaiting: db.prepare("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved'").get().total,
-    queueWaiting: db.prepare("SELECT COUNT(*) AS total FROM queue_entries WHERE status = 'waiting'").get().total,
+    appointments: 0,
+    triageWaiting: 0,
+    queueWaiting: 0,
   };
 
-  const appointments = db
-    .prepare(`
-      SELECT appointments.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name
-      FROM appointments
-      JOIN users ON users.id = appointments.user_id
-      JOIN units ON units.id = appointments.unit_id
-      ORDER BY scheduled_at DESC
-      LIMIT 12
-    `)
-    .all();
-  const users = db
-    .prepare('SELECT id, name, email, role, avatar, provider, created_at, last_login FROM users ORDER BY created_at DESC')
-    .all();
-  const tickets = db
-    .prepare(`
-      SELECT support_tickets.*, users.name AS user_name, users.email AS user_email
-      FROM support_tickets
-      JOIN users ON users.id = support_tickets.user_id
-      ORDER BY created_at DESC
-    `)
-    .all();
-  const triage = db
-    .prepare(`
-      SELECT triage_cases.*, users.name AS user_name, users.email AS user_email
-      FROM triage_cases
-      JOIN users ON users.id = triage_cases.user_id
-      ORDER BY triage_cases.created_at DESC
-    `)
-    .all();
-  const queue = db
-    .prepare(`
-      SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name
-      FROM queue_entries
-      JOIN users ON users.id = queue_entries.user_id
-      JOIN units ON units.id = queue_entries.unit_id
-      ORDER BY queue_entries.status = 'waiting' DESC, queue_entries.position ASC
-    `)
-    .all();
+  if (!isSupport) {
+    if (unitId) {
+      overview.appointments = db.prepare("SELECT COUNT(*) AS total FROM appointments WHERE unit_id = ?").get(unitId).total;
+      overview.queueWaiting = db.prepare("SELECT COUNT(*) AS total FROM queue_entries WHERE status = 'waiting' AND unit_id = ?").get(unitId).total;
+      try {
+        overview.triageWaiting = db.prepare("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved' AND unit_id = ?").get(unitId).total;
+      } catch (e) {
+        overview.triageWaiting = db.prepare("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved'").get().total;
+      }
+    } else {
+      overview.appointments = count('appointments');
+      overview.queueWaiting = db.prepare("SELECT COUNT(*) AS total FROM queue_entries WHERE status = 'waiting'").get().total;
+      overview.triageWaiting = db.prepare("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved'").get().total;
+    }
+  }
+
+  const appointments = isSupport ? [] : (unitId 
+    ? db.prepare(`SELECT appointments.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM appointments JOIN users ON users.id = appointments.user_id JOIN units ON units.id = appointments.unit_id WHERE appointments.unit_id = ? ORDER BY scheduled_at DESC LIMIT 12`).all(unitId)
+    : db.prepare(`SELECT appointments.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM appointments JOIN users ON users.id = appointments.user_id JOIN units ON units.id = appointments.unit_id ORDER BY scheduled_at DESC LIMIT 12`).all());
+
+  const users = db.prepare('SELECT id, name, email, role, avatar, provider, created_at, last_login, last_seen, cpf FROM users ORDER BY created_at DESC').all();
+
+  const tickets = db.prepare(`SELECT support_tickets.*, users.name AS user_name, users.email AS user_email FROM support_tickets JOIN users ON users.id = support_tickets.user_id ORDER BY created_at DESC`).all();
+
+  let triage = [];
+  if (!isSupport) {
+    try {
+      triage = unitId 
+        ? db.prepare(`SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id WHERE triage_cases.unit_id = ? ORDER BY triage_cases.created_at DESC`).all(unitId)
+        : db.prepare(`SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id ORDER BY triage_cases.created_at DESC`).all();
+    } catch (e) {
+      triage = db.prepare(`SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id ORDER BY triage_cases.created_at DESC`).all();
+    }
+  }
+
+  const queue = isSupport ? [] : (unitId
+    ? db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id WHERE queue_entries.unit_id = ? ORDER BY queue_entries.status = 'waiting' DESC, queue_entries.position ASC`).all(unitId)
+    : db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY queue_entries.status = 'waiting' DESC, queue_entries.position ASC`).all());
+
   const integrations = db.prepare('SELECT * FROM integrations ORDER BY name').all();
   const announcements = db.prepare('SELECT * FROM announcements ORDER BY published_at DESC LIMIT 8').all();
-  const auditLogs = db
-    .prepare(`
-      SELECT audit_logs.*, users.name AS actor_name
-      FROM audit_logs
-      LEFT JOIN users ON users.id = audit_logs.actor_id
-      ORDER BY audit_logs.created_at DESC
-      LIMIT 10
-    `)
-    .all();
+  const units = db.prepare('SELECT * FROM units ORDER BY name ASC').all();
+  
+  const auditLogs = db.prepare(`SELECT audit_logs.*, users.name AS actor_name FROM audit_logs LEFT JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 10`).all();
+  
+  const records = isSupport ? [] : db.prepare(`SELECT records.*, users.name AS user_name, users.email AS user_email FROM records JOIN users ON users.id = records.user_id ORDER BY records.created_at DESC LIMIT 20`).all();
 
-  res.json({ overview, appointments, users, tickets, triage, queue, integrations, announcements, auditLogs });
+  res.json({ overview, appointments, users, tickets, triage, queue, integrations, announcements, auditLogs, records, units });
+});
+
+router.post('/admin/users', authRequired, adminRequired, (req, res, next) => {
+  try {
+    const { name, email, password, cpf } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: 'Nome, email e senha sao obrigatorios.' });
+    }
+    
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (existing) {
+      return res.status(400).json({ message: 'Este email ja esta em uso.' });
+    }
+
+    const id = `usr_${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+    const hash = bcrypt.hashSync(password, 12);
+    const nowStr = now();
+
+    db.prepare(`
+      INSERT INTO users (id, name, email, password_hash, role, provider, created_at, last_seen, cpf)
+      VALUES (@id, @name, @email, @password_hash, 'user', 'local', @created_at, @last_seen, @cpf)
+    `).run({
+      id,
+      name,
+      email,
+      password_hash: hash,
+      created_at: nowStr,
+      last_seen: nowStr,
+      cpf: cpf || null,
+    });
+
+    logAudit(req.user.id, 'created', 'users', id);
+    return res.status(201).json({ message: 'Usuario criado com sucesso.' });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 router.patch('/admin/users/:id/role', authRequired, adminRequired, (req, res, next) => {
@@ -787,6 +844,32 @@ function profileForUser(userId) {
 
 function triageForUser(userId) {
   return db.prepare('SELECT * FROM triage_cases WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+}
+
+function allTriageCases() {
+  return db
+    .prepare(`
+      SELECT triage_cases.*, users.name AS user_name, users.email AS user_email
+      FROM triage_cases
+      JOIN users ON users.id = triage_cases.user_id
+      ORDER BY triage_cases.created_at DESC
+    `)
+    .all();
+}
+
+function recordsForUser(userId) {
+  return db.prepare('SELECT * FROM records WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+}
+
+function allRecords() {
+  return db
+    .prepare(`
+      SELECT records.*, users.name AS user_name, users.email AS user_email
+      FROM records
+      JOIN users ON users.id = records.user_id
+      ORDER BY records.created_at DESC
+    `)
+    .all();
 }
 
 function queueForUser(userId) {

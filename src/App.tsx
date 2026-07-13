@@ -21,6 +21,8 @@ import {
   Mail,
   Map,
   Navigation,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RefreshCw,
   Search,
@@ -33,13 +35,14 @@ import {
   Wifi,
   Wrench,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import { MapContainer, Marker, Popup, TileLayer, ZoomControl } from 'react-leaflet';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap } from 'react-leaflet';
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { api, fetchBootstrap, googleAuthUrl, mediaUrl } from './api';
 import { AuthProvider, useAuth } from './auth';
 import type {
   AdminPayload,
+  Announcement,
   Appointment,
   AppointmentStatus,
   BootstrapPayload,
@@ -63,6 +66,8 @@ const markerIcon = L.divIcon({
   iconSize: [34, 34],
   iconAnchor: [17, 17],
 });
+
+const AUTO_REFRESH_MS = 30000;
 
 function App() {
   return (
@@ -107,7 +112,7 @@ function App() {
           <Route
             path="/app/triagem"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute role="admin">
                 <PortalPage page="triage" />
               </ProtectedRoute>
             }
@@ -115,7 +120,7 @@ function App() {
           <Route
             path="/app/fila"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute role="admin">
                 <PortalPage page="queue" />
               </ProtectedRoute>
             }
@@ -123,7 +128,7 @@ function App() {
           <Route
             path="/admin"
             element={
-              <ProtectedRoute role="admin">
+              <ProtectedRoute role="staff">
                 <AdminDashboard />
               </ProtectedRoute>
             }
@@ -139,14 +144,15 @@ function HomeRedirect() {
   const { user, loading } = useAuth();
   if (loading) return <FullPageLoader />;
   if (!user) return <Navigate to="/login" replace />;
-  return <Navigate to={user.role === 'admin' ? '/admin' : '/app'} replace />;
+  return <Navigate to={['admin', 'support'].includes(user.role) ? '/admin' : '/app'} replace />;
 }
 
-function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: 'admin' }) {
+function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: 'admin' | 'staff' }) {
   const { user, loading } = useAuth();
   if (loading) return <FullPageLoader />;
   if (!user) return <Navigate to="/login" replace />;
-  if (role && user.role !== role) return <Navigate to="/app" replace />;
+  if (role === 'admin' && user.role !== 'admin') return <Navigate to="/app" replace />;
+  if (role === 'staff' && !['admin', 'support'].includes(user.role)) return <Navigate to="/app" replace />;
   return children;
 }
 
@@ -336,28 +342,39 @@ type PortalPageName = 'home' | 'map' | 'profile' | 'records' | 'triage' | 'queue
 function PortalPage({ page }: { page: PortalPageName }) {
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = () =>
+  const load = (silent = false) =>
     api<DashboardPayload>('/dashboard')
-      .then(setData)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Erro ao carregar dados.'));
+      .then((payload) => {
+        setData(payload);
+        setError('');
+        setLastUpdated(new Date());
+      })
+      .catch((err) => {
+        if (!silent) {
+          setError(err instanceof Error ? err.message : 'Erro ao carregar dados.');
+        }
+      });
 
   useEffect(() => {
     void load();
   }, []);
+
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
 
   if (!data) {
     return <DashboardShell title="SaúdeConnect">{error ? <EmptyState message={error} /> : <PanelLoader />}</DashboardShell>;
   }
 
   return (
-    <DashboardShell title={pageTitle(page)} subtitle={pageSubtitle(page)}>
+    <DashboardShell title={pageTitle(page)} subtitle={pageSubtitle(page)} lastUpdated={lastUpdated}>
       {page === 'home' && <HomePage data={data} onReload={load} />}
       {page === 'map' && <MapPage units={data.units} />}
-      {page === 'profile' && <ProfilePage profile={data.profile} onSaved={load} />}
-      {page === 'records' && <RecordsPage records={data.records} exams={data.exams} onCreated={load} />}
-      {page === 'triage' && <TriagePage triage={data.triage} onCreated={load} />}
-      {page === 'queue' && <QueuePage queue={data.queue} units={data.units} onCreated={load} />}
+      {page === 'profile' && <ProfilePage profile={data.profile} onSaved={load} isAdminView={data.user.role === 'admin'} />}
+      {page === 'records' && <RecordsPage records={data.records} exams={data.exams} onCreated={load} isAdminView={data.user.role === 'admin'} users={data.users} />}
+      {page === 'triage' && <TriagePage triage={data.triage} onCreated={load} isAdminView={data.user.role === 'admin'} users={data.users} />}
+      {page === 'queue' && <QueuePage queue={data.queue} onCreated={load} users={data.users} />}
     </DashboardShell>
   );
 }
@@ -402,9 +419,29 @@ function HomePage({ data, onReload }: { data: DashboardPayload; onReload: () => 
   );
 }
 
+function MapController({ center }: { center: [number, number] }) {
+  const map = useMap();
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      map.invalidateSize();
+      map.flyTo(center, 14, { duration: 1.5 });
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [center, map]);
+  return null;
+}
+
 function MapPage({ units }: { units: Unit[] }) {
   const [selectedId, setSelectedId] = useState(units[0]?.id || '');
-  const selected = units.find((unit) => unit.id === selectedId) || units[0];
+  const [query, setQuery] = useState('');
+  
+  const filteredUnits = units.filter(unit => 
+    unit.name.toLowerCase().includes(query.toLowerCase()) ||
+    unit.address.toLowerCase().includes(query.toLowerCase()) ||
+    unit.type.toLowerCase().includes(query.toLowerCase())
+  );
+
+  const selected = units.find((unit) => unit.id === selectedId) || filteredUnits[0];
   const center: [number, number] = selected ? [selected.lat, selected.lng] : [-23.5505, -46.6333];
 
   return (
@@ -413,9 +450,19 @@ function MapPage({ units }: { units: Unit[] }) {
         <div>
           <h2>Unidades de Saúde</h2>
           <p>Encontre a unidade mais próxima de você</p>
+          <div className="search-bar" style={{ marginTop: '16px', position: 'relative' }}>
+            <Search size={16} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-dim)' }} />
+            <input 
+              type="text" 
+              placeholder="Buscar unidade..." 
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ width: '100%', padding: '10px 10px 10px 36px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface-sunken)' }}
+            />
+          </div>
         </div>
         <div className="map-cards">
-          {units.map((unit) => (
+          {filteredUnits.map((unit) => (
             <button
               className={`map-unit-card ${unit.id === selectedId ? 'active' : ''}`}
               key={unit.id}
@@ -437,6 +484,7 @@ function MapPage({ units }: { units: Unit[] }) {
 
       <div className="map-panel">
         <MapContainer center={center} zoom={14} className="leaflet-map" zoomControl={false}>
+          <MapController center={center} />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -496,15 +544,18 @@ function MapPage({ units }: { units: Unit[] }) {
   );
 }
 
-function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: () => Promise<void> }) {
+function ProfilePage({ profile, onSaved, isAdminView }: { profile: PatientProfile; onSaved: () => Promise<void>; isAdminView?: boolean }) {
   const { refresh, user } = useAuth();
   const [form, setForm] = useState({
-    cpf: profile.cpf || '',
-    birthDate: profile.birth_date || '',
-    phone: profile.phone || '',
-    susCard: profile.sus_card || '',
-    address: profile.address || '',
-    emergencyContact: profile.emergency_contact || '',
+    name: '',
+    email: '',
+    password: '',
+    cpf: isAdminView ? '' : profile.cpf || '',
+    birthDate: isAdminView ? '' : profile.birth_date || '',
+    phone: isAdminView ? '' : profile.phone || '',
+    susCard: isAdminView ? '' : profile.sus_card || '',
+    address: isAdminView ? '' : profile.address || '',
+    emergencyContact: isAdminView ? '' : profile.emergency_contact || '',
   });
   const [message, setMessage] = useState('');
   const [avatarPreview, setAvatarPreview] = useState(user?.avatar || '');
@@ -514,8 +565,14 @@ function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: (
     event.preventDefault();
     setMessage('');
     try {
-      await api('/profile', { method: 'PUT', body: form });
-      setMessage('Cadastro atualizado com sucesso.');
+      if (isAdminView) {
+        await api('/admin/users', { method: 'POST', body: { ...form, role: 'user' } });
+        setMessage('Paciente cadastrado com sucesso.');
+        setForm({ name: '', email: '', password: '', cpf: '', birthDate: '', phone: '', susCard: '', address: '', emergencyContact: '' });
+      } else {
+        await api('/profile', { method: 'PUT', body: form });
+        setMessage('Cadastro atualizado com sucesso.');
+      }
       await onSaved();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Falha ao salvar cadastro.');
@@ -555,7 +612,9 @@ function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: (
 
   return (
     <form className="form-grid-panel" onSubmit={submit}>
-      <SectionHeader icon={<UserPlus />} title="Cadastro do cidadão" />
+      <SectionHeader icon={<UserPlus />} title={isAdminView ? "Cadastrar Novo Paciente" : "Cadastro do cidadão"} />
+      
+      {!isAdminView && (
       <div className="photo-uploader full-span">
         <Avatar label={avatarPreview || user?.name || 'SC'} />
         <div>
@@ -567,6 +626,24 @@ function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: (
           <input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadAvatar} disabled={avatarBusy} />
         </label>
       </div>
+      )}
+
+      {isAdminView && (
+        <>
+          <label>
+            Nome
+            <input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </label>
+          <label>
+            E-mail
+            <input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+          </label>
+          <label>
+            Senha Padrão
+            <input required type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+          </label>
+        </>
+      )}
       <label>
         CPF
         <input value={form.cpf} onChange={(event) => setForm({ ...form, cpf: event.target.value })} />
@@ -599,9 +676,9 @@ function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: (
         />
       </label>
       {message && <div className="form-message full-span">{message}</div>}
-      <button className="primary-action" type="submit">
+      <button type="submit" className="primary-action full-span">
         <Save size={18} />
-        Salvar cadastro
+        {isAdminView ? "Cadastrar Paciente" : "Salvar Cadastro"}
       </button>
     </form>
   );
@@ -609,23 +686,28 @@ function ProfilePage({ profile, onSaved }: { profile: PatientProfile; onSaved: (
 
 function RecordsPage({
   exams,
+  isAdminView = false,
   onCreated,
   records,
+  users,
 }: {
   exams: DashboardPayload['exams'];
+  isAdminView?: boolean;
   onCreated: () => Promise<void>;
   records: RecordItem[];
+  users?: DashboardPayload['users'];
 }) {
   const [category, setCategory] = useState('Histórico');
   const [title, setTitle] = useState('Nova evolução clínica');
   const [description, setDescription] = useState('Paciente relata melhora após orientações da equipe.');
   const [message, setMessage] = useState('');
+  const [userId, setUserId] = useState('');
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage('');
     try {
-      await api('/records', { method: 'POST', body: { category, title, description } });
+      await api('/records', { method: 'POST', body: { category, title, description, user_id: userId || undefined } });
       setMessage('Registro adicionado ao prontuário.');
       await onCreated();
     } catch (error) {
@@ -636,7 +718,7 @@ function RecordsPage({
   return (
     <section className="content-grid">
       <div className="timeline">
-        <SectionHeader icon={<ClipboardList />} title="Prontuários" />
+        <SectionHeader icon={<ClipboardList />} title={isAdminView ? 'Prontuários da rede' : 'Prontuários'} />
         {[...records, ...exams]
           .sort((a, b) => Date.parse('requested_at' in b ? b.requested_at : b.created_at) - Date.parse('requested_at' in a ? a.requested_at : a.created_at))
           .map((item) => (
@@ -644,6 +726,9 @@ function RecordsPage({
               <span className="timeline-dot" />
               <div>
                 <strong>{item.title}</strong>
+                {'creator_name' in item && item.creator_name && (
+                  <small className="record-owner">Enviado por: {item.creator_name}</small>
+                )}
                 <p>{'status' in item ? `${item.status} em ${item.unit}` : item.description}</p>
                 <small>{formatDate('requested_at' in item ? item.requested_at : item.created_at)}</small>
               </div>
@@ -652,9 +737,25 @@ function RecordsPage({
       </div>
       <form className="action-panel" onSubmit={submit}>
         <SectionHeader icon={<Plus />} title="Adicionar registro" />
+        {isAdminView && users && (
+          <label>
+            Paciente
+            <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
+              <option value="">Selecione um paciente...</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           Categoria
-          <input value={category} onChange={(event) => setCategory(event.target.value)} required />
+          <select value={category} onChange={(event) => setCategory(event.target.value)} required>
+            <option value="Histórico">Histórico</option>
+            <option value="Exames">Exames</option>
+            <option value="Medicação">Medicação</option>
+            <option value="Procedimento Cirúrgico">Procedimento Cirúrgico</option>
+          </select>
         </label>
         <label>
           Título
@@ -674,16 +775,27 @@ function RecordsPage({
   );
 }
 
-function TriagePage({ onCreated, triage }: { onCreated: () => Promise<void>; triage: TriageCase[] }) {
+function TriagePage({
+  isAdminView = false,
+  onCreated,
+  triage,
+  users,
+}: {
+  isAdminView?: boolean;
+  onCreated: () => Promise<void>;
+  triage: TriageCase[];
+  users?: DashboardPayload['users'];
+}) {
   const [symptoms, setSymptoms] = useState('Febre, dor no corpo e tosse há dois dias.');
   const [riskLevel, setRiskLevel] = useState<TriageRisk>('medium');
   const [message, setMessage] = useState('');
+  const [userId, setUserId] = useState('');
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage('');
     try {
-      await api('/triage', { method: 'POST', body: { symptoms, riskLevel } });
+      await api('/triage', { method: 'POST', body: { symptoms, riskLevel, user_id: userId || undefined } });
       setMessage('Triagem registrada e enviada para a equipe.');
       await onCreated();
     } catch (error) {
@@ -694,7 +806,7 @@ function TriagePage({ onCreated, triage }: { onCreated: () => Promise<void>; tri
   return (
     <section className="content-grid">
       <div className="stack">
-        <SectionHeader icon={<Stethoscope />} title="Triagens recentes" />
+        <SectionHeader icon={<Stethoscope />} title={isAdminView ? 'Triagens da rede' : 'Triagens recentes'} />
         <div className="card-list">
           {triage.map((item) => (
             <article className="appointment-card" key={item.id}>
@@ -703,18 +815,34 @@ function TriagePage({ onCreated, triage }: { onCreated: () => Promise<void>; tri
               </span>
               <div>
                 <div className="card-title-line">
-                  <strong>{riskLabel(item.risk_level)}</strong>
+                  <strong>
+                    {item.creator_name ? `Enviado por: ${item.creator_name} - ` : ''}
+                    {riskLabel(item.risk_level)}
+                  </strong>
                   <StatusBadge status={item.status} />
                 </div>
                 <p>{item.symptoms}</p>
                 <small>{item.recommendation}</small>
+                {isAdminView && item.user_email && <small>{item.user_email}</small>}
               </div>
             </article>
           ))}
+          {!triage.length && <div className="admin-empty">Nenhuma triagem registrada.</div>}
         </div>
       </div>
       <form className="action-panel" onSubmit={submit}>
         <SectionHeader icon={<Plus />} title="Nova triagem" />
+        {isAdminView && users && (
+          <label>
+            Paciente
+            <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
+              <option value="">Selecione um paciente...</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           Sintomas
           <textarea value={symptoms} onChange={(event) => setSymptoms(event.target.value)} required />
@@ -738,16 +866,21 @@ function TriagePage({ onCreated, triage }: { onCreated: () => Promise<void>; tri
   );
 }
 
-function QueuePage({ onCreated, queue, units }: { onCreated: () => Promise<void>; queue: QueueEntry[]; units: Unit[] }) {
-  const [unitId, setUnitId] = useState(units[0]?.id || '');
+function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>; queue: QueueEntry[]; users?: DashboardPayload['users'] }) {
   const [service, setService] = useState('Clínica geral');
   const [message, setMessage] = useState('');
+  const [userId, setUserId] = useState('');
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage('');
+    const unitId = sessionStorage.getItem('saudeconnect.unitFilter');
+    if (!unitId) {
+      setMessage('Nenhuma unidade selecionada na página Início.');
+      return;
+    }
     try {
-      await api('/queue', { method: 'POST', body: { unitId, service } });
+      await api('/queue', { method: 'POST', body: { unitId, service, user_id: userId || undefined } });
       setMessage('Entrada adicionada à fila digital.');
       await onCreated();
     } catch (error) {
@@ -774,17 +907,18 @@ function QueuePage({ onCreated, queue, units }: { onCreated: () => Promise<void>
         </div>
       </div>
       <form className="action-panel" onSubmit={submit}>
-        <SectionHeader icon={<Plus />} title="Entrar na fila" />
-        <label>
-          Unidade
-          <select value={unitId} onChange={(event) => setUnitId(event.target.value)} required>
-            {units.map((unit) => (
-              <option key={unit.id} value={unit.id}>
-                {unit.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SectionHeader icon={<Plus />} title="Adicionar paciente na fila" />
+        {users && (
+          <label>
+            Paciente
+            <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
+              <option value="">Selecione um paciente...</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           Serviço
           <input value={service} onChange={(event) => setService(event.target.value)} required />
@@ -800,22 +934,36 @@ function QueuePage({ onCreated, queue, units }: { onCreated: () => Promise<void>
 }
 
 function AdminDashboard() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const isSupport = user?.role === 'support';
   const [data, setData] = useState<AdminPayload | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
   const [announcement, setAnnouncement] = useState({ title: '', body: '', audience: 'all' });
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [unitFilter, setUnitFilter] = useState(() => sessionStorage.getItem('saudeconnect.unitFilter') || '');
 
-  const load = () => {
-    setError('');
-    return api<AdminPayload>('/admin/overview')
-      .then(setData)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Erro ao carregar administração.'));
+  const load = (silent = false, specificUnit = unitFilter) => {
+    if (!silent) setError('');
+    const queryParam = specificUnit ? `?unit_id=${specificUnit}` : '';
+    return api<AdminPayload>(`/admin/overview${queryParam}`)
+      .then((payload) => {
+        setData(payload);
+        setLastUpdated(new Date());
+      })
+      .catch((err) => {
+        if (!silent) setError(err instanceof Error ? err.message : 'Erro ao carregar administração.');
+      });
   };
 
   useEffect(() => {
+    sessionStorage.setItem('saudeconnect.unitFilter', unitFilter);
     void load();
-  }, []);
+  }, [unitFilter]);
+
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
 
   async function mutate(path: string, body: Record<string, unknown>, successMessage: string) {
     setError('');
@@ -899,22 +1047,34 @@ function AdminDashboard() {
   ) || [];
   const visibleTriage = data?.triage.filter((item) => matches(item.user_name, item.symptoms, item.status)) || [];
   const visibleQueue = data?.queue.filter((item) => matches(item.user_name, item.service, item.unit_name, item.status)) || [];
-  const visibleUsers = data?.users.filter((item) => matches(item.name, item.email, item.role, item.provider)) || [];
+  const visibleUsers = data?.users.filter((item) => matches(item.name, item.email, item.role, item.provider, item.cpf)) || [];
   const visibleTickets = data?.tickets.filter((item) => matches(item.user_name, item.subject, item.message, item.status)) || [];
+  const visibleRecords = data?.records.filter((item) => matches(item.user_name, item.user_email, item.title, item.category)) || [];
 
   if (!data) return <DashboardShell title="Administração">{error ? <EmptyState message={error} /> : <PanelLoader />}</DashboardShell>;
 
   return (
-    <DashboardShell title="Administração" subtitle="Operação, demanda, triagem, fila e integrações em tempo real.">
+    <DashboardShell title="Administração" subtitle="Operação, demanda, triagem, fila e integrações em tempo real." lastUpdated={lastUpdated}>
       <section className="admin-toolbar" aria-label="Ferramentas administrativas">
         <label className="admin-search">
           <Search size={18} />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar paciente, unidade, serviço ou status"
+            placeholder="Buscar por nome, CPF, unidade, status..."
           />
         </label>
+        <select 
+          className="admin-tool-button" 
+          value={unitFilter} 
+          onChange={(e) => setUnitFilter(e.target.value)}
+          style={{ appearance: 'auto', background: 'var(--surface)' }}
+        >
+          <option value="">Todas as Unidades</option>
+          {data?.units?.map(u => (
+            <option key={u.id} value={u.id}>{u.name}</option>
+          ))}
+        </select>
         <button className="admin-tool-button" type="button" onClick={() => void load()} title="Atualizar dados">
           <RefreshCw size={18} />
           Atualizar
@@ -929,11 +1089,13 @@ function AdminDashboard() {
 
       <section className="metrics-grid">
         <MetricCard icon={<UsersRound />} label="Usuários" value={data.overview.users} tone="blue" />
-        <MetricCard icon={<CalendarDays />} label="Agendamentos" value={data.overview.appointments} tone="green" />
-        <MetricCard icon={<Stethoscope />} label="Triagens abertas" value={data.overview.triageWaiting} tone="orange" />
-        <MetricCard icon={<ListChecks />} label="Fila aguardando" value={data.overview.queueWaiting} tone="purple" />
+        {isAdmin && <MetricCard icon={<CalendarDays />} label="Agendamentos" value={data.overview.appointments} tone="green" />}
+        {isAdmin && <MetricCard icon={<Stethoscope />} label="Triagens abertas" value={data.overview.triageWaiting} tone="orange" />}
+        {isAdmin && <MetricCard icon={<ListChecks />} label="Fila aguardando" value={data.overview.queueWaiting} tone="purple" />}
+        {isSupport && <MetricCard icon={<ClipboardList />} label="Chamados abertos" value={data.overview.openTickets} tone="red" />}
       </section>
 
+      {isAdmin && (
       <section className="admin-overview-grid">
         <article className="network-card">
           <div className="network-card-header">
@@ -956,7 +1118,6 @@ function AdminDashboard() {
           <div className="network-summary">
             <div><Hospital size={18} /><strong>{data.overview.users}</strong><span>usuários</span></div>
             <div><CalendarDays size={18} /><strong>{data.overview.appointments}</strong><span>agendamentos</span></div>
-            <div><Wrench size={18} /><strong>{data.overview.openTickets}</strong><span>chamados</span></div>
           </div>
         </article>
 
@@ -994,7 +1155,9 @@ function AdminDashboard() {
           <button className="primary-action" type="submit"><Megaphone size={18} />Publicar aviso</button>
         </form>
       </section>
+      )}
 
+      {isAdmin && (
       <section className="admin-grid">
         <AdminTable title="Agenda da rede" icon={<CalendarDays />}>
           {visibleAppointments.map((appointment) => (
@@ -1023,7 +1186,8 @@ function AdminDashboard() {
             <div className="admin-row" key={item.id}>
               <div>
                 <strong>{item.user_name}</strong>
-                <span>{riskLabel(item.risk_level)} - {item.symptoms}</span>
+                <span>{riskLabel(item.risk_level)} - {item.symptoms} {item.creator_name ? `(Enviado por: ${item.creator_name})` : ''}</span>
+                <small className="presence-label">{item.user_email}</small>
               </div>
               <select value={item.status} onChange={(event) => void updateTriage(item.id, event.target.value as TriageStatus)}>
                 <option value="waiting">Aguardando</option>
@@ -1035,7 +1199,9 @@ function AdminDashboard() {
           {!visibleTriage.length && <div className="admin-empty">Nenhuma triagem encontrada.</div>}
         </AdminTable>
       </section>
+      )}
 
+      {isAdmin && (
       <section className="admin-grid">
         <AdminTable title="Fila" icon={<ListChecks />}>
           {visibleQueue.map((item) => (
@@ -1076,25 +1242,34 @@ function AdminDashboard() {
           ))}
         </AdminTable>
       </section>
+      )}
 
       <section className="admin-grid">
         <AdminTable title="Usuários e permissões" icon={<UserCog />}>
-          {visibleUsers.map((item) => (
-            <div className="admin-row" key={item.id}>
-              <div>
-                <strong>{item.name}</strong>
-                <span>{item.email} - acesso {item.provider}</span>
+          {visibleUsers.map((item) => {
+            const presence = presenceInfo(item.last_seen || item.lastSeen || item.last_login || item.lastLogin);
+            return (
+              <div className="admin-row" key={item.id}>
+                <div>
+                  <strong>
+                    <PresenceDot status={presence.status} />
+                    {item.name}
+                  </strong>
+                  <span>{item.email} - acesso {item.provider}</span>
+                  <small className={`presence-label status-${presence.status}`}>{presence.label}</small>
+                </div>
+                <small>{item.last_seen || item.lastSeen ? `Último acesso ${formatRelativeTime(String(item.last_seen || item.lastSeen))}` : (item.last_login || item.lastLogin ? `Último acesso ${formatRelativeTime(String(item.last_login || item.lastLogin))}` : 'Sem acesso recente')}</small>
+                <select value={item.role} onChange={(event) => void updateUserRole(item.id, event.target.value as User['role'])}>
+                  <option value="user">Usuário</option>
+                  <option value="admin">Administrador</option>
+                </select>
               </div>
-              <small>{item.last_login ? formatDate(item.last_login, false) : 'Sem acesso recente'}</small>
-              <select value={item.role} onChange={(event) => void updateUserRole(item.id, event.target.value as User['role'])}>
-                <option value="user">Usuário</option>
-                <option value="admin">Administrador</option>
-              </select>
-            </div>
-          ))}
+            );
+          })}
           {!visibleUsers.length && <div className="admin-empty">Nenhum usuário encontrado.</div>}
         </AdminTable>
 
+        {isSupport && (
         <AdminTable title="Chamados de suporte" icon={<ClipboardList />} compact>
           {visibleTickets.map((item) => (
             <div className="admin-row" key={item.id}>
@@ -1112,9 +1287,25 @@ function AdminDashboard() {
           ))}
           {!visibleTickets.length && <div className="admin-empty">Nenhum chamado encontrado.</div>}
         </AdminTable>
+        )}
       </section>
 
+      {isAdmin && (
       <section className="admin-grid">
+        <AdminTable title="Prontuários da rede" icon={<FileText />}>
+          {visibleRecords.map((item) => (
+            <div className="admin-row" key={item.id}>
+              <div>
+                <strong>{item.title}</strong>
+                <span>{item.user_name} - {item.category} {item.creator_name ? `(Enviado por: ${item.creator_name})` : ''}</span>
+                <p>{item.description}</p>
+              </div>
+              <small>{formatDate(item.created_at, false)}</small>
+            </div>
+          ))}
+          {!visibleRecords.length && <div className="admin-empty">Nenhum prontuário encontrado.</div>}
+        </AdminTable>
+
         <AdminTable title="Avisos publicados" icon={<Megaphone />} compact>
           {data.announcements.map((item) => (
             <div className="admin-row" key={item.id}>
@@ -1139,55 +1330,188 @@ function AdminDashboard() {
           ))}
         </AdminTable>
       </section>
+      )}
     </DashboardShell>
   );
 }
 
-function DashboardShell({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle?: string }) {
+function DashboardShell({
+  children,
+  lastUpdated,
+  title,
+  subtitle,
+}: {
+  children: React.ReactNode;
+  lastUpdated?: Date | null;
+  title: string;
+  subtitle?: string;
+}) {
   const { user, logout } = useAuth();
-  const homePath = user?.role === 'admin' ? '/admin' : '/app';
+  const isAdmin = user?.role === 'admin';
+  const isSupport = user?.role === 'support';
+  const homePath = ['admin', 'support'].includes(user?.role || '') ? '/admin' : '/app';
+  const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem('saudeconnect.sidebar') !== 'closed');
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [hasViewedNotifications, setHasViewedNotifications] = useState(false);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [notificationsError, setNotificationsError] = useState('');
+
+  useEffect(() => {
+    localStorage.setItem('saudeconnect.sidebar', sidebarOpen ? 'open' : 'closed');
+  }, [sidebarOpen]);
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const payload = await api<{ announcements: Announcement[] }>('/notifications');
+      setAnnouncements((prev) => {
+        if (prev.length !== payload.announcements.length) setHasViewedNotifications(false);
+        return payload.announcements;
+      });
+      setNotificationsError('');
+    } catch (error) {
+      setNotificationsError(error instanceof Error ? error.message : 'Falha ao carregar avisos.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    void loadNotifications();
+  }, [user, loadNotifications]);
+
+  useAutoRefresh(() => {
+    if (user) void loadNotifications();
+  }, AUTO_REFRESH_MS);
+
+  useEffect(() => {
+    if (!notificationsOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.notification-area')) setNotificationsOpen(false);
+    };
+    window.addEventListener('click', onPointerDown);
+    return () => window.removeEventListener('click', onPointerDown);
+  }, [notificationsOpen]);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
       <aside className="sidebar">
-        <BrandLockup small />
+        <div className="sidebar-head">
+          <BrandLockup small />
+          <button
+            type="button"
+            className="sidebar-toggle inside"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Ocultar menu"
+            title="Ocultar menu"
+          >
+            <PanelLeftClose size={18} />
+          </button>
+        </div>
         <nav>
           <NavLink end to={homePath}>
             <LayoutDashboard size={18} />
             Início
           </NavLink>
-          <NavLink to="/app/mapa">
-            <Map size={18} />
-            Mapa
-          </NavLink>
-          <NavLink to="/app/cadastro">
-            <UserPlus size={18} />
-            Cadastro
-          </NavLink>
-          <NavLink to="/app/prontuarios">
-            <FileText size={18} />
-            Prontuários
-          </NavLink>
-          <NavLink to="/app/triagem">
-            <Stethoscope size={18} />
-            Triagem
-          </NavLink>
-          <NavLink to="/app/fila">
-            <ListChecks size={18} />
-            Fila
-          </NavLink>
+          {!isSupport && (
+            <NavLink to="/app/mapa">
+              <Map size={18} />
+              Mapa
+            </NavLink>
+          )}
+          {!isSupport && (
+            <NavLink to="/app/cadastro">
+              <UserPlus size={18} />
+              Cadastro
+            </NavLink>
+          )}
+          {!isSupport && (
+            <NavLink to="/app/prontuarios">
+              <FileText size={18} />
+              Prontuários
+            </NavLink>
+          )}
+          {isAdmin && (
+            <NavLink to="/app/triagem">
+              <Stethoscope size={18} />
+              Triagem
+            </NavLink>
+          )}
+          {isAdmin && (
+            <NavLink to="/app/fila">
+              <ListChecks size={18} />
+              Fila
+            </NavLink>
+          )}
+          <button type="button" onClick={() => setSidebarOpen(false)} className="sidebar-hide-btn" style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--teal)', border: 'none', color: 'white', padding: '10px 16px', margin: '8px 12px', borderRadius: '8px', cursor: 'pointer', textAlign: 'left', fontWeight: 500 }}>
+            <PanelLeftClose size={18} />
+            Ocultar Menu
+          </button>
         </nav>
       </aside>
 
       <main className="workspace">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">{user?.role === 'admin' ? 'Gestão da rede' : 'Sistema Integrado'}</p>
-            <h1>{title}</h1>
-            {subtitle && <p>{subtitle}</p>}
+          <div className="topbar-main">
+            <button
+              type="button"
+              className="sidebar-toggle"
+              onClick={() => setSidebarOpen((current) => !current)}
+              aria-label={sidebarOpen ? 'Ocultar menu' : 'Mostrar menu'}
+              title={sidebarOpen ? 'Ocultar menu' : 'Mostrar menu'}
+            >
+              {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+            </button>
+            <div>
+              <p className="eyebrow">{user?.role === 'admin' ? 'Gestão da rede' : 'Sistema Integrado'}</p>
+              <h1>{title}</h1>
+              {subtitle && <p>{subtitle}</p>}
+              {lastUpdated && (
+                <small className="live-badge">
+                  <RefreshCw size={12} className="spin-slow" />
+                  Atualizado {formatRelativeTime(lastUpdated.toISOString())}
+                </small>
+              )}
+            </div>
           </div>
           <div className="user-pill">
-            <Bell size={18} />
+            <div className="notification-area">
+              <button
+                type="button"
+                className={`icon-button ${notificationsOpen ? 'active' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setNotificationsOpen((current) => !current);
+                  setHasViewedNotifications(true);
+                  if (!notificationsOpen) void loadNotifications();
+                }}
+                aria-label="Notificações"
+                title="Notificações"
+              >
+                <Bell size={18} />
+                {announcements.length > 0 && !hasViewedNotifications && <span className="notification-count">{announcements.length}</span>}
+              </button>
+              {notificationsOpen && (
+                <div className="notification-panel">
+                  <div className="notification-panel-head">
+                    <strong>Notificações</strong>
+                    <button type="button" onClick={() => void loadNotifications()} aria-label="Atualizar avisos">
+                      <RefreshCw size={14} />
+                    </button>
+                  </div>
+                  {notificationsError && <div className="notification-empty">{notificationsError}</div>}
+                  {!notificationsError && announcements.length === 0 && (
+                    <div className="notification-empty">Nenhum aviso no momento.</div>
+                  )}
+                  {announcements.map((item) => (
+                    <article className="notification-item" key={item.id}>
+                      <strong>{item.title}</strong>
+                      <p>{item.body}</p>
+                      <small>{formatDate(item.published_at, false)}</small>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
             <Avatar label={user?.avatar || user?.name || 'SC'} />
             <span>{user?.name}</span>
             <button type="button" onClick={logout} aria-label="Sair">
@@ -1460,6 +1784,50 @@ function nextDateInput() {
   const date = new Date(Date.now() + 86400000 * 3);
   date.setMinutes(0, 0, 0);
   return date.toISOString().slice(0, 16);
+}
+
+function useAutoRefresh(callback: () => void, intervalMs: number) {
+  useEffect(() => {
+    const timer = window.setInterval(callback, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [callback, intervalMs]);
+}
+
+function presenceInfo(lastSeen?: string | null) {
+  if (!lastSeen) {
+    return { status: 'offline' as const, label: 'Nunca conectou' };
+  }
+
+  const diffMs = Date.now() - Date.parse(lastSeen);
+  if (diffMs <= 2 * 60 * 1000) {
+    return { status: 'online' as const, label: 'Online agora' };
+  }
+
+  if (diffMs <= 15 * 60 * 1000) {
+    return { status: 'away' as const, label: `Ausente há ${formatDuration(diffMs)}` };
+  }
+
+  return { status: 'offline' as const, label: `Offline há ${formatDuration(diffMs)}` };
+}
+
+function formatDuration(ms: number) {
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 60) return `${Math.max(minutes, 1)} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `${days} dia${days > 1 ? 's' : ''}`;
+}
+
+function formatRelativeTime(value: string) {
+  const diffMs = Date.now() - Date.parse(value);
+  if (diffMs < 15000) return 'agora';
+  if (diffMs < 60000) return `há ${Math.floor(diffMs / 1000)}s`;
+  return `há ${formatDuration(diffMs)}`;
+}
+
+function PresenceDot({ status }: { status: 'online' | 'away' | 'offline' }) {
+  return <span className={`presence-dot status-${status}`} aria-hidden="true" />;
 }
 
 export default App;

@@ -79,7 +79,7 @@ export function authRequired(req, res, next) {
         id: payload.sub,
         name: payload.name,
         email: payload.email,
-        role: payload.role === 'admin' ? 'admin' : 'user',
+        role: ['admin', 'support'].includes(payload.role) ? payload.role : 'user',
         avatar: payload.avatar || null,
         provider: payload.provider || 'local',
         created_at: payload.createdAt || new Date().toISOString(),
@@ -91,6 +91,9 @@ export function authRequired(req, res, next) {
     if (!user) {
       return res.status(401).json({ message: 'Usuario nao encontrado.' });
     }
+
+    db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(new Date().toISOString(), user.id);
+    user.last_seen = new Date().toISOString();
 
     req.user = user;
     req.publicUser = publicUser(user);
@@ -112,6 +115,13 @@ export function revokeCurrentSession(req) {
 export function adminRequired(req, res, next) {
   if (req.user?.role !== 'admin') {
     return res.status(403).json({ message: 'Acesso restrito a administradores.' });
+  }
+  return next();
+}
+
+export function staffRequired(req, res, next) {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'support') {
+    return res.status(403).json({ message: 'Acesso restrito a administradores e suporte.' });
   }
   return next();
 }

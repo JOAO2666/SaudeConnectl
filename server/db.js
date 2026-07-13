@@ -29,6 +29,7 @@ export function publicUser(user) {
     provider: user.provider,
     createdAt: user.created_at,
     lastLogin: user.last_login,
+    lastSeen: user.last_seen || user.last_login || null,
   };
 }
 
@@ -39,12 +40,13 @@ export function initDb() {
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT,
-      role TEXT NOT NULL CHECK (role IN ('user', 'admin')) DEFAULT 'user',
+      role TEXT NOT NULL CHECK (role IN ('user', 'admin', 'support')) DEFAULT 'user',
       avatar TEXT,
       provider TEXT NOT NULL DEFAULT 'local',
       google_id TEXT UNIQUE,
       created_at TEXT NOT NULL,
-      last_login TEXT
+      last_login TEXT,
+      cpf TEXT
     );
 
     CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -189,6 +191,11 @@ export function initDb() {
   ensureColumn('units', 'hours', "TEXT NOT NULL DEFAULT 'Seg-Sex: 7h às 17h'");
   ensureColumn('units', 'lat', 'REAL NOT NULL DEFAULT -23.5505');
   ensureColumn('units', 'lng', 'REAL NOT NULL DEFAULT -46.6333');
+  ensureColumn('users', 'last_seen', 'TEXT');
+  ensureColumn('users', 'cpf', 'TEXT');
+  ensureColumn('triage_cases', 'creator_name', 'TEXT');
+  ensureColumn('triage_cases', 'unit_id', 'TEXT');
+  ensureColumn('records', 'creator_name', 'TEXT');
 
   seedDb();
 }
@@ -202,27 +209,65 @@ function ensureColumn(table, column, definition) {
 
 function seedDb() {
   const seedTime = now();
-  upsertUser({
-    id: 'usr_admin',
-    name: 'Administradora SaúdeConnect',
-    email: 'admin@saudeconnect.com',
-    password_hash: bcrypt.hashSync('Admin@12345', 12),
-    role: 'admin',
-    avatar: 'AS',
-    created_at: seedTime,
-    last_login: seedTime,
-  });
+    upsertUser({
+      id: 'usr_admin',
+      name: 'Administradora SaudeConnect',
+      email: 'admin@gmail.com',
+      password_hash: bcrypt.hashSync('123', 12),
+      role: 'admin',
+      avatar: 'AS',
+      created_at: seedTime,
+      last_login: seedTime,
+      last_seen: seedTime,
+    });
+    
+    upsertUser({
+      id: 'usr_admin_old',
+      name: 'Administradora SaudeConnect (Antigo)',
+      email: 'admin@saudeconnect.com',
+      password_hash: bcrypt.hashSync('Admin@12345', 12),
+      role: 'admin',
+      avatar: 'AS',
+      created_at: seedTime,
+      last_login: seedTime,
+      last_seen: seedTime,
+    });
 
-  upsertUser({
-    id: 'usr_paciente',
-    name: 'Marina Costa',
-    email: 'paciente@saudeconnect.com',
-    password_hash: bcrypt.hashSync('Paciente@12345', 12),
-    role: 'user',
-    avatar: 'MC',
-    created_at: seedTime,
-    last_login: seedTime,
-  });
+    upsertUser({
+      id: 'usr_support',
+      name: 'Suporte Tecnico',
+      email: 'suporte@gmail.com',
+      password_hash: bcrypt.hashSync('123', 12),
+      role: 'support',
+      avatar: 'ST',
+      created_at: seedTime,
+      last_login: seedTime,
+      last_seen: seedTime,
+    });
+
+    upsertUser({
+      id: 'usr_paciente',
+      name: 'Usuario Demo',
+      email: 'usuario@gmail.com',
+      password_hash: bcrypt.hashSync('123', 12),
+      role: 'user',
+      avatar: 'UD',
+      created_at: seedTime,
+      last_login: seedTime,
+      last_seen: seedTime,
+    });
+    
+    upsertUser({
+      id: 'usr_paciente_old',
+      name: 'Paciente (Antigo)',
+      email: 'paciente@saudeconnect.com',
+      password_hash: bcrypt.hashSync('Paciente@12345', 12),
+      role: 'user',
+      avatar: 'PA',
+      created_at: seedTime,
+      last_login: seedTime,
+      last_seen: seedTime,
+    });
 
   [
     {
@@ -468,20 +513,21 @@ function seedOnce(table, id, insert) {
 }
 
 function upsertUser(user) {
-  const exists = db.prepare('SELECT id FROM users WHERE id = ? OR email = ?').get(user.id, user.email);
+  const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(user.id);
   if (exists) {
     db.prepare(`
       UPDATE users
-      SET name = @name, role = @role, avatar = @avatar
-      WHERE id = @id OR email = @email
-    `).run(user);
+      SET name = @name, email = @email, password_hash = @password_hash, role = @role, avatar = @avatar,
+          last_login = COALESCE(@last_login, last_login), last_seen = COALESCE(@last_seen, last_seen), cpf = COALESCE(@cpf, cpf)
+      WHERE id = @id
+    `).run({ cpf: null, ...user });
     return;
   }
 
   db.prepare(`
-    INSERT INTO users (id, name, email, password_hash, role, avatar, provider, created_at, last_login)
-    VALUES (@id, @name, @email, @password_hash, @role, @avatar, 'local', @created_at, @last_login)
-  `).run(user);
+    INSERT INTO users (id, name, email, password_hash, role, avatar, provider, created_at, last_login, last_seen, cpf)
+    VALUES (@id, @name, @email, @password_hash, @role, @avatar, 'local', @created_at, @last_login, @last_seen, @cpf)
+  `).run({ cpf: null, ...user });
 }
 
 function upsertUnit(unit) {

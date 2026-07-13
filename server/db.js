@@ -275,7 +275,7 @@ async function seedDb() {
   const unitsData = [
     {
       id: 'unit_upa_petrolina',
-      name: 'UPA Petrolina',
+      name: 'UPAE Petrolina',
       type: 'Pronto Atendimento',
       city: 'Petrolina',
       district: 'Gercino Coelho',
@@ -284,8 +284,8 @@ async function seedDb() {
       status: 'Aberto',
       distance_km: 1.0,
       hours: '24 horas',
-      lat: -9.38978519068669,
-      lng: -40.524348024976725,
+      lat: -9.389668754751655,
+      lng: -40.522996191633226,
       services: ['Emergencia', 'Triagem', 'Enfermagem'],
     },
     {
@@ -329,8 +329,8 @@ async function seedDb() {
       status: 'Aberto',
       distance_km: 1.5,
       hours: '24 horas',
-      lat: -9.3907572,
-      lng: -40.5055009,
+      lat: -9.390904404674428,
+      lng: -40.49777466722732,
       services: ['Traumatologia', 'Urgencia', 'Cirurgia'],
     },
     {

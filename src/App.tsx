@@ -53,7 +53,6 @@ import type {
   RecordItem,
   TriageCase,
   TriageRisk,
-  TriageStatus,
   TicketStatus,
   Unit,
   User,
@@ -368,7 +367,7 @@ function PortalPage({ page }: { page: PortalPageName }) {
 
   return (
     <DashboardShell title={pageTitle(page)} subtitle={pageSubtitle(page)} lastUpdated={lastUpdated}>
-      {page === 'home' && <HomePage data={data} onReload={load} />}
+      {page === 'home' && <HomePage data={data} />}
       {page === 'map' && <MapPage units={data.units} />}
       {page === 'profile' && <ProfilePage profile={data.profile} onSaved={load} isAdminView={data.user.role === 'admin'} />}
       {page === 'records' && <RecordsPage records={data.records} exams={data.exams} onCreated={load} isAdminView={data.user.role === 'admin'} users={data.users} />}
@@ -378,7 +377,7 @@ function PortalPage({ page }: { page: PortalPageName }) {
   );
 }
 
-function HomePage({ data, onReload }: { data: DashboardPayload; onReload: () => Promise<void> }) {
+function HomePage({ data }: { data: DashboardPayload }) {
   return (
     <>
       <section className="metrics-grid">
@@ -868,12 +867,12 @@ function TriagePage({
                 <div className="card-title-line">
                   <strong>
                     {item.creator_name ? `Enviado por: ${item.creator_name} - ` : ''}
-                    {riskLabel(item.risk_level)}
+                    {item.manchester_color}
                   </strong>
                   <StatusBadge status={item.status} />
                 </div>
-                <p>{item.symptoms}</p>
-                <small>{item.recommendation}</small>
+                <p>{item.chief_complaint}</p>
+                <small>{item.temperature} °C, PA: {item.sys_bp}/{item.dia_bp}</small>
                 {isAdminView && item.user_email && <small>{item.user_email}</small>}
               </div>
             </article>
@@ -1057,9 +1056,7 @@ function AdminDashboard() {
     await mutate(`/admin/appointments/${id}`, { status }, 'Agendamento atualizado.');
   }
 
-  async function updateTriage(id: string, status: TriageStatus) {
-    await mutate(`/admin/triage/${id}`, { status }, 'Triagem atualizada.');
-  }
+
 
   async function updateQueue(id: string, status: QueueStatus) {
     await mutate(`/admin/queue/${id}`, { status }, 'Fila atualizada.');
@@ -1118,7 +1115,7 @@ function AdminDashboard() {
     const rows = [
       ['categoria', 'nome', 'detalhe', 'status'],
       ...data.appointments.map((item) => ['agendamento', item.user_name || '', item.specialty, item.status]),
-      ...data.triage.map((item) => ['triagem', item.user_name || '', item.symptoms, item.status]),
+      ...data.triage.map((item) => ['triagem', item.user_name || '', item.chief_complaint, item.status]),
       ...data.queue.map((item) => ['fila', item.user_name || '', item.service, item.status]),
       ...data.tickets.map((item) => ['chamado', item.user_name || '', item.subject, item.status]),
     ];
@@ -1143,11 +1140,9 @@ function AdminDashboard() {
   const visibleAppointments = data?.appointments.filter((item) =>
     matches(item.user_name, item.user_email, item.specialty, item.unit_name, item.status),
   ) || [];
-  const visibleTriage = data?.triage.filter((item) => matches(item.user_name, item.symptoms, item.status)) || [];
   const visibleQueue = data?.queue.filter((item) => matches(item.user_name, item.service, item.unit_name, item.status)) || [];
   const visibleUsers = data?.users.filter((item) => matches(item.name, item.email, item.role, item.provider, item.cpf)) || [];
   const visibleTickets = data?.tickets.filter((item) => matches(item.user_name, item.subject, item.message, item.status)) || [];
-  const visibleRecords = data?.records.filter((item) => matches(item.user_name, item.user_email, item.title, item.category)) || [];
 
   if (!data) return <DashboardShell title="Administração">{error ? <EmptyState message={error} /> : <PanelLoader />}</DashboardShell>;
 
@@ -1941,14 +1936,7 @@ function pageSubtitle(page: PortalPageName) {
   }[page];
 }
 
-function riskLabel(risk: TriageRisk) {
-  return {
-    low: 'Prioridade verde',
-    medium: 'Prioridade amarela',
-    high: 'Prioridade laranja',
-    critical: 'Prioridade vermelha',
-  }[risk];
-}
+
 
 function formatDate(value: string, includeTime = true) {
   return new Intl.DateTimeFormat('pt-BR', {

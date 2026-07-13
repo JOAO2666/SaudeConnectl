@@ -54,6 +54,7 @@ export type Appointment = {
 
 export type Exam = {
   id: string;
+  user_id: string;
   title: string;
   unit: string;
   requested_at: string;
@@ -63,6 +64,7 @@ export type Exam = {
 
 export type RecordItem = {
   id: string;
+  user_id: string;
   category: string;
   title: string;
   description: string;

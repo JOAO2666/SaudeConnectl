@@ -603,6 +603,25 @@ label span:focus-within {
   background: #fff4ea;
 }
 
+.icon-danger {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.icon-danger:hover {
+  background: #fff1ef;
+  color: var(--red);
+  border-color: #ffccc7;
+}
+
 .notification-count {
   position: absolute;
   top: -4px;

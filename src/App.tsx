@@ -717,7 +717,17 @@ function RecordsPage({
       setMessage('Registro adicionado ao prontuário.');
       await onCreated();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Falha ao registrar prontuário.');
+      setMessage(error instanceof Error ? error.message : 'Falha ao salvar registro.');
+    }
+  }
+
+  async function deleteRecord(id: string) {
+    if (!confirm('Tem certeza que deseja excluir este registro?')) return;
+    try {
+      await api(`/admin/records/${id}`, { method: 'DELETE' });
+      await onCreated();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Falha ao excluir registro.');
     }
   }
 
@@ -773,16 +783,29 @@ function RecordsPage({
         </div>
 
         {filteredItems.map((item) => (
-            <div className="timeline-item" key={item.id}>
+            <div className="timeline-item" key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <span className="timeline-dot" />
-              <div>
-                <strong>{item.title}</strong>
-                {'creator_name' in item && item.creator_name && (
-                  <small className="record-owner">Enviado por: {item.creator_name}</small>
-                )}
-                <p>{'status' in item ? `${item.status} em ${item.unit}` : item.description}</p>
-                <small>{formatDate('requested_at' in item ? item.requested_at : item.created_at)}</small>
+              <div style={{ flex: 1 }}>
+                <div>
+                  <strong>{item.title}</strong>
+                  {'creator_name' in item && item.creator_name && (
+                    <small className="record-owner">Enviado por: {item.creator_name}</small>
+                  )}
+                  <p>{'status' in item ? `${item.status} em ${item.unit}` : item.description}</p>
+                  <small>{formatDate('requested_at' in item ? item.requested_at : item.created_at)}</small>
+                </div>
               </div>
+              {isAdminView && !('requested_at' in item) && (
+                <button 
+                  type="button"
+                  className="icon-danger" 
+                  title="Excluir"
+                  onClick={() => void deleteRecord(item.id)}
+                  style={{ marginLeft: 16 }}
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
             </div>
           ))}
           {!filteredItems.length && <div className="admin-empty">Nenhum registro encontrado.</div>}
@@ -1327,12 +1350,11 @@ function AdminDashboard() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <StatusBadge status={appointment.status} />
                 <button 
-                  className="icon-btn" 
-                  style={{ color: 'var(--danger)', padding: 4 }} 
+                  className="icon-danger" 
                   title="Excluir"
                   onClick={() => void deleteAppointment(appointment.id)}
                 >
-                  <Trash2 size={16} />
+                  <Trash2 size={18} />
                 </button>
               </div>
             </div>

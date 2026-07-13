@@ -84,31 +84,42 @@ export type PatientProfile = {
 };
 
 export type TriageRisk = 'low' | 'medium' | 'high' | 'critical';
-export type TriageStatus = 'waiting' | 'in_service' | 'resolved';
+export type TriageStatus = 'resolved';
 
 export type TriageCase = {
   id: string;
   user_id: string;
-  symptoms: string;
-  risk_level: TriageRisk;
+  queue_id: string;
+  temperature: string;
+  sys_bp: string;
+  dia_bp: string;
+  heart_rate: string;
+  resp_rate: string;
+  spo2: string;
+  glucose: string;
+  chief_complaint: string;
+  manchester_color: 'Azul' | 'Verde' | 'Amarelo' | 'Laranja' | 'Vermelho';
   status: TriageStatus;
-  recommendation: string;
   created_at: string;
   user_name?: string;
   user_email?: string;
   creator_name?: string;
 };
 
-export type QueueStatus = 'waiting' | 'called' | 'done' | 'cancelled';
+export type QueueStatus = 'Aguardando Triagem' | 'Triagem realizada' | 'done' | 'cancelled';
 
 export type QueueEntry = {
   id: string;
   user_id: string;
   unit_id: string;
   service: string;
+  chief_complaint: string;
   position: number;
   estimated_minutes: number;
   status: QueueStatus;
+  triage_color?: 'Azul' | 'Verde' | 'Amarelo' | 'Laranja' | 'Vermelho';
+  triage_time?: string;
+  deadline_time?: string;
   created_at: string;
   unit_name?: string;
   unit_address?: string;

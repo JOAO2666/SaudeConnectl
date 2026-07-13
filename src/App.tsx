@@ -397,7 +397,6 @@ function HomePage({ data, onReload }: { data: DashboardPayload; onReload: () => 
             ))}
           </div>
         </div>
-        <AppointmentForm units={data.units} onCreated={onReload} />
       </section>
 
       <section className="units-band">
@@ -423,8 +422,10 @@ function MapController({ center }: { center: [number, number] }) {
   useEffect(() => {
     const timeout = setTimeout(() => {
       map.invalidateSize();
-      map.flyTo(center, 14, { duration: 1.5 });
-    }, 250);
+      requestAnimationFrame(() => {
+        map.flyTo(center, 15, { animate: true, duration: 1.5, easeLinearity: 0.25 });
+      });
+    }, 150);
     return () => clearTimeout(timeout);
   }, [center, map]);
   return null;
@@ -696,17 +697,19 @@ function RecordsPage({
   records: RecordItem[];
   users?: DashboardPayload['users'];
 }) {
-  const [category, setCategory] = useState('Histórico');
+  const [category, setCategory] = useState('Geral');
   const [title, setTitle] = useState('Nova evolução clínica');
   const [description, setDescription] = useState('Paciente relata melhora após orientações da equipe.');
   const [message, setMessage] = useState('');
   const [userId, setUserId] = useState('');
+  const [filterUserId, setFilterUserId] = useState('');
+  const [activeTab, setActiveTab] = useState('Geral');
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage('');
     try {
-      await api('/records', { method: 'POST', body: { category, title, description, user_id: userId || undefined } });
+      await api('/records', { method: 'POST', body: { category, title, description, userId } });
       setMessage('Registro adicionado ao prontuário.');
       await onCreated();
     } catch (error) {
@@ -714,13 +717,58 @@ function RecordsPage({
     }
   }
 
+  const allItems = [...records, ...exams]
+    .sort((a, b) => Date.parse('requested_at' in b ? b.requested_at : b.created_at) - Date.parse('requested_at' in a ? a.requested_at : a.created_at));
+
+  const filteredItems = allItems.filter(item => {
+    // Tab filtering
+    if (activeTab === 'Exames') {
+      if (!('requested_at' in item) && item.category !== 'Exames') return false;
+    } else if (activeTab !== 'Geral') {
+      if ('requested_at' in item) return false;
+      if (item.category !== activeTab) return false;
+    }
+    // Patient filtering
+    if (isAdminView && filterUserId) {
+      if (item.user_id !== filterUserId) return false;
+    }
+    return true;
+  });
+
   return (
     <section className="content-grid">
       <div className="timeline">
         <SectionHeader icon={<ClipboardList />} title={isAdminView ? 'Prontuários da rede' : 'Prontuários'} />
-        {[...records, ...exams]
-          .sort((a, b) => Date.parse('requested_at' in b ? b.requested_at : b.created_at) - Date.parse('requested_at' in a ? a.requested_at : a.created_at))
-          .map((item) => (
+        
+        {isAdminView && users && (
+          <div className="admin-filter" style={{ marginBottom: '16px' }}>
+            <label>
+              Filtrar por Paciente:
+              <select value={filterUserId} onChange={(e) => setFilterUserId(e.target.value)} style={{ marginLeft: '8px', padding: '4px', borderRadius: '4px', border: '1px solid var(--border)' }}>
+                <option value="">Todos os pacientes</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+
+        <div className="tabs" style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          {['Geral', 'Exames', 'Medicação', 'Procedimento Cirúrgico'].map(tab => (
+            <button
+              key={tab}
+              type="button"
+              className={`chip ${activeTab === tab ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab)}
+              style={{ background: activeTab === tab ? 'var(--primary)' : 'var(--surface-sunken)', color: activeTab === tab ? 'white' : 'var(--text)' }}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {filteredItems.map((item) => (
             <div className="timeline-item" key={item.id}>
               <span className="timeline-dot" />
               <div>
@@ -733,10 +781,13 @@ function RecordsPage({
               </div>
             </div>
           ))}
+          {!filteredItems.length && <div className="admin-empty">Nenhum registro encontrado.</div>}
       </div>
+      
+      {isAdminView && (
       <form className="action-panel" onSubmit={submit}>
         <SectionHeader icon={<Plus />} title="Adicionar registro" />
-        {isAdminView && users && (
+        {users && (
           <label>
             Paciente
             <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
@@ -750,7 +801,7 @@ function RecordsPage({
         <label>
           Categoria
           <select value={category} onChange={(event) => setCategory(event.target.value)} required>
-            <option value="Histórico">Histórico</option>
+            <option value="Geral">Geral</option>
             <option value="Exames">Exames</option>
             <option value="Medicação">Medicação</option>
             <option value="Procedimento Cirúrgico">Procedimento Cirúrgico</option>
@@ -770,6 +821,7 @@ function RecordsPage({
           Salvar registro
         </button>
       </form>
+      )}
     </section>
   );
 }
@@ -867,6 +919,7 @@ function TriagePage({
 
 function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>; queue: QueueEntry[]; users?: DashboardPayload['users'] }) {
   const [service, setService] = useState('Clínica geral');
+  const [chiefComplaint, setChiefComplaint] = useState('Checkup de rotina');
   const [message, setMessage] = useState('');
   const [userId, setUserId] = useState('');
 
@@ -879,7 +932,7 @@ function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>
       return;
     }
     try {
-      await api('/queue', { method: 'POST', body: { unitId, service, user_id: userId || undefined } });
+      await api('/queue', { method: 'POST', body: { unitId, service, chiefComplaint, user_id: userId || undefined } });
       setMessage('Entrada adicionada à fila digital.');
       await onCreated();
     } catch (error) {
@@ -893,13 +946,19 @@ function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>
         <SectionHeader icon={<ListChecks />} title="Fila digital" />
         <div className="queue-board">
           {queue.map((item) => (
-            <article className="queue-card" key={item.id}>
+            <article className="queue-card" key={item.id} style={{ borderLeft: item.triage_color ? `4px solid ${
+              item.triage_color === 'Vermelho' ? 'var(--danger)' : 
+              item.triage_color === 'Laranja' ? '#ff6600' : 
+              item.triage_color === 'Amarelo' ? 'var(--warning)' : 
+              item.triage_color === 'Verde' ? 'var(--success)' : 
+              'var(--primary)'}` : '4px solid transparent' }}>
               <div>
                 <strong>#{item.position}</strong>
                 <span>{item.service}</span>
               </div>
               <p>{item.unit_name}</p>
-              <small>{item.estimated_minutes} min estimados</small>
+              {item.chief_complaint && <p style={{fontSize: '0.85em', margin: '4px 0'}}>Queixa: {item.chief_complaint}</p>}
+              <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min estimados`}</small>
               <StatusBadge status={item.status} />
             </article>
           ))}
@@ -922,6 +981,10 @@ function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>
           Serviço
           <input value={service} onChange={(event) => setService(event.target.value)} required />
         </label>
+        <label>
+          Motivo da Consulta
+          <input value={chiefComplaint} onChange={(event) => setChiefComplaint(event.target.value)} required />
+        </label>
         {message && <div className="form-message">{message}</div>}
         <button className="primary-action" type="submit">
           <ListChecks size={18} />
@@ -943,6 +1006,20 @@ function AdminDashboard() {
   const [announcement, setAnnouncement] = useState({ title: '', body: '', audience: 'all' });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [unitFilter, setUnitFilter] = useState(() => sessionStorage.getItem('saudeconnect.unitFilter') || '');
+
+  // Triage state
+  const [triageQueueId, setTriageQueueId] = useState<string | null>(null);
+  const [triageData, setTriageData] = useState({
+    temperature: '',
+    sysBp: '',
+    diaBp: '',
+    heartRate: '',
+    respRate: '',
+    spo2: '',
+    glucose: '',
+    chiefComplaint: '',
+    manchesterColor: 'Verde' as const
+  });
 
   const load = (silent = false, specificUnit = unitFilter) => {
     if (!silent) setError('');
@@ -986,6 +1063,28 @@ function AdminDashboard() {
 
   async function updateQueue(id: string, status: QueueStatus) {
     await mutate(`/admin/queue/${id}`, { status }, 'Fila atualizada.');
+  }
+
+  async function submitTriage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!triageQueueId) return;
+    setError('');
+    setNotice('');
+    try {
+      await api('/triage', { 
+        method: 'POST', 
+        body: { queueId: triageQueueId, ...triageData } 
+      });
+      setNotice('Triagem (Protocolo de Manchester) registrada com sucesso!');
+      setTriageQueueId(null);
+      setTriageData({
+        temperature: '', sysBp: '', diaBp: '', heartRate: '', respRate: '',
+        spo2: '', glucose: '', chiefComplaint: '', manchesterColor: 'Verde'
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao registrar triagem.');
+    }
   }
 
   async function updateIntegration(id: string, status: Integration['status']) {
@@ -1180,23 +1279,9 @@ function AdminDashboard() {
           {!visibleAppointments.length && <div className="admin-empty">Nenhum agendamento encontrado.</div>}
         </AdminTable>
 
-        <AdminTable title="Triagem" icon={<Stethoscope />} compact>
-          {visibleTriage.map((item) => (
-            <div className="admin-row" key={item.id}>
-              <div>
-                <strong>{item.user_name}</strong>
-                <span>{riskLabel(item.risk_level)} - {item.symptoms} {item.creator_name ? `(Enviado por: ${item.creator_name})` : ''}</span>
-                <small className="presence-label">{item.user_email}</small>
-              </div>
-              <select value={item.status} onChange={(event) => void updateTriage(item.id, event.target.value as TriageStatus)}>
-                <option value="waiting">Aguardando</option>
-                <option value="in_service">Em atendimento</option>
-                <option value="resolved">Resolvida</option>
-              </select>
-            </div>
-          ))}
-          {!visibleTriage.length && <div className="admin-empty">Nenhuma triagem encontrada.</div>}
-        </AdminTable>
+        <AppointmentForm units={data.units} users={data.users} onCreated={() => load()} />
+
+
       </section>
       )}
 
@@ -1204,15 +1289,28 @@ function AdminDashboard() {
       <section className="admin-grid">
         <AdminTable title="Fila" icon={<ListChecks />}>
           {visibleQueue.map((item) => (
-            <div className="admin-row" key={item.id}>
+            <div className="admin-row" key={item.id} style={{ borderLeft: item.triage_color ? `4px solid ${
+              item.triage_color === 'Vermelho' ? 'var(--danger)' : 
+              item.triage_color === 'Laranja' ? '#ff6600' : 
+              item.triage_color === 'Amarelo' ? 'var(--warning)' : 
+              item.triage_color === 'Verde' ? 'var(--success)' : 
+              'var(--primary)'}` : '4px solid transparent' }}>
               <div>
                 <strong>#{item.position} - {item.user_name}</strong>
                 <span>{item.service} - {item.unit_name}</span>
+                {item.chief_complaint && <span style={{display: 'block', fontSize: '0.85em', color: 'var(--text-muted)'}}>Queixa: {item.chief_complaint}</span>}
               </div>
-              <small>{item.estimated_minutes} min</small>
+              <div>
+                <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min`}</small>
+                {item.status !== 'Triagem realizada' && item.status !== 'done' && item.status !== 'cancelled' && (
+                  <button className="secondary-action" style={{ display: 'block', marginTop: '4px', padding: '2px 8px', fontSize: '12px' }} onClick={() => setTriageQueueId(item.id)}>
+                    Realizar Triagem
+                  </button>
+                )}
+              </div>
               <select value={item.status} onChange={(event) => void updateQueue(item.id, event.target.value as QueueStatus)}>
-                <option value="waiting">Aguardando</option>
-                <option value="called">Chamado</option>
+                <option value="Aguardando Triagem">Aguardando Triagem</option>
+                <option value="Triagem realizada">Triagem realizada</option>
                 <option value="done">Finalizado</option>
                 <option value="cancelled">Cancelado</option>
               </select>
@@ -1220,6 +1318,65 @@ function AdminDashboard() {
           ))}
           {!visibleQueue.length && <div className="admin-empty">Nenhuma entrada de fila encontrada.</div>}
         </AdminTable>
+
+        {triageQueueId && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <form className="action-panel" onSubmit={submitTriage} style={{ background: 'var(--surface)', padding: '24px', borderRadius: '8px', maxWidth: '600px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+              <SectionHeader icon={<Activity />} title="Realizar Triagem (Protocolo de Manchester)" />
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <label>
+                  Temp. (°C)
+                  <input required value={triageData.temperature} onChange={(e) => setTriageData({...triageData, temperature: e.target.value})} placeholder="36.5" />
+                </label>
+                <label>
+                  Freq. Cardíaca (bpm)
+                  <input required value={triageData.heartRate} onChange={(e) => setTriageData({...triageData, heartRate: e.target.value})} placeholder="80" />
+                </label>
+                <label>
+                  PA Sistólica (mmHg)
+                  <input required value={triageData.sysBp} onChange={(e) => setTriageData({...triageData, sysBp: e.target.value})} placeholder="120" />
+                </label>
+                <label>
+                  PA Diastólica (mmHg)
+                  <input required value={triageData.diaBp} onChange={(e) => setTriageData({...triageData, diaBp: e.target.value})} placeholder="80" />
+                </label>
+                <label>
+                  Freq. Respiratória (irpm)
+                  <input required value={triageData.respRate} onChange={(e) => setTriageData({...triageData, respRate: e.target.value})} placeholder="16" />
+                </label>
+                <label>
+                  SpO2 (%)
+                  <input required value={triageData.spo2} onChange={(e) => setTriageData({...triageData, spo2: e.target.value})} placeholder="98" />
+                </label>
+                <label>
+                  Glicemia (mg/dL)
+                  <input required value={triageData.glucose} onChange={(e) => setTriageData({...triageData, glucose: e.target.value})} placeholder="90" />
+                </label>
+                <label>
+                  Classificação (Cor)
+                  <select required value={triageData.manchesterColor} onChange={(e) => setTriageData({...triageData, manchesterColor: e.target.value as any})}>
+                    <option value="Azul">Azul (Não Urgente - 240m)</option>
+                    <option value="Verde">Verde (Pouco Urgente - 120m)</option>
+                    <option value="Amarelo">Amarelo (Urgente - 50m)</option>
+                    <option value="Laranja">Laranja (Muito Urgente - 10m)</option>
+                    <option value="Vermelho">Vermelho (Emergência - 0m)</option>
+                  </select>
+                </label>
+              </div>
+
+              <label style={{ marginTop: '16px', display: 'block' }}>
+                Queixa Principal / Avaliação
+                <textarea required value={triageData.chiefComplaint} onChange={(e) => setTriageData({...triageData, chiefComplaint: e.target.value})} rows={3}></textarea>
+              </label>
+
+              <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                <button type="submit" className="primary-action" style={{ flex: 1 }}>Salvar Triagem</button>
+                <button type="button" className="secondary-action" style={{ flex: 1 }} onClick={() => setTriageQueueId(null)}>Cancelar</button>
+              </div>
+            </form>
+          </div>
+        )}
 
         <AdminTable title="Integrações" icon={<Wifi />} compact>
           {data.integrations.map((integration) => (
@@ -1261,6 +1418,7 @@ function AdminDashboard() {
                 <select value={item.role} onChange={(event) => void updateUserRole(item.id, event.target.value as User['role'])}>
                   <option value="user">Usuário</option>
                   <option value="admin">Administrador</option>
+                  <option value="support">Suporte Técnico</option>
                 </select>
               </div>
             );
@@ -1269,41 +1427,44 @@ function AdminDashboard() {
         </AdminTable>
 
         {isSupport && (
-        <AdminTable title="Chamados de suporte" icon={<ClipboardList />} compact>
-          {visibleTickets.map((item) => (
-            <div className="admin-row" key={item.id}>
-              <div>
-                <strong>{item.subject}</strong>
-                <span>{item.user_name} - {item.message}</span>
-              </div>
-              <StatusBadge status={item.priority === 'high' ? 'danger' : item.priority === 'medium' ? 'warn' : 'info'} />
-              <select value={item.status} onChange={(event) => void updateTicket(item.id, event.target.value as TicketStatus)}>
-                <option value="open">Aberto</option>
-                <option value="in_review">Em análise</option>
-                <option value="resolved">Resolvido</option>
-              </select>
-            </div>
-          ))}
-          {!visibleTickets.length && <div className="admin-empty">Nenhum chamado encontrado.</div>}
-        </AdminTable>
+          <>
+            <AdminTable title="Chamados de suporte" icon={<ClipboardList />} compact>
+              {visibleTickets.map((item) => (
+                <div className="admin-row" key={item.id}>
+                  <div>
+                    <strong>{item.subject}</strong>
+                    <span>{item.user_name} - {item.message}</span>
+                  </div>
+                  <StatusBadge status={item.priority === 'high' ? 'danger' : item.priority === 'medium' ? 'warn' : 'info'} />
+                  <select value={item.status} onChange={(event) => void updateTicket(item.id, event.target.value as TicketStatus)}>
+                    <option value="open">Aberto</option>
+                    <option value="in_review">Em análise</option>
+                    <option value="resolved">Resolvido</option>
+                  </select>
+                </div>
+              ))}
+              {!visibleTickets.length && <div className="admin-empty">Nenhum chamado encontrado.</div>}
+            </AdminTable>
+
+            <AdminTable title="Unidades" icon={<Hospital />} compact>
+              {data?.units?.map((unit) => (
+                <div className="admin-row" key={unit.id}>
+                  <div>
+                    <strong>{unit.name}</strong>
+                    <span>{unit.address}</span>
+                  </div>
+                  <StatusBadge status={unit.status} />
+                  <small>{unit.hours} - {unit.phone}</small>
+                </div>
+              ))}
+            </AdminTable>
+          </>
         )}
       </section>
 
       {isAdmin && (
       <section className="admin-grid">
-        <AdminTable title="Prontuários da rede" icon={<FileText />}>
-          {visibleRecords.map((item) => (
-            <div className="admin-row" key={item.id}>
-              <div>
-                <strong>{item.title}</strong>
-                <span>{item.user_name} - {item.category} {item.creator_name ? `(Enviado por: ${item.creator_name})` : ''}</span>
-                <p>{item.description}</p>
-              </div>
-              <small>{formatDate(item.created_at, false)}</small>
-            </div>
-          ))}
-          {!visibleRecords.length && <div className="admin-empty">Nenhum prontuário encontrado.</div>}
-        </AdminTable>
+
 
         <AdminTable title="Avisos publicados" icon={<Megaphone />} compact>
           {data.announcements.map((item) => (
@@ -1508,6 +1669,16 @@ function DashboardShell({
                       <small>{formatDate(item.published_at, false)}</small>
                     </article>
                   ))}
+                  <div style={{ padding: '8px', borderTop: '1px solid var(--border)' }}>
+                    <button 
+                      type="button" 
+                      className="primary-action" 
+                      onClick={() => setNotificationsOpen(false)}
+                      style={{ width: '100%' }}
+                    >
+                      Ocultar
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1538,7 +1709,8 @@ function BrandLockup({ small = false }: { small?: boolean }) {
   );
 }
 
-function AppointmentForm({ units, onCreated }: { units: Unit[]; onCreated: () => Promise<void> }) {
+function AppointmentForm({ units, users, onCreated }: { units: Unit[]; users: { id: string; name: string; email: string }[]; onCreated: () => Promise<void> }) {
+  const [userId, setUserId] = useState(users[0]?.id || '');
   const [unitId, setUnitId] = useState(units[0]?.id || '');
   const [specialty, setSpecialty] = useState('Clínica geral');
   const [scheduledAt, setScheduledAt] = useState(nextDateInput());
@@ -1549,17 +1721,27 @@ function AppointmentForm({ units, onCreated }: { units: Unit[]; onCreated: () =>
     event.preventDefault();
     setMessage('');
     try {
-      await api('/appointments', { method: 'POST', body: { unitId, specialty, scheduledAt, reason } });
-      setMessage('Pedido enviado para confirmação.');
+      await api('/appointments', { method: 'POST', body: { userId, unitId, specialty, scheduledAt, reason } });
+      setMessage('Agendamento confirmado.');
       await onCreated();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Falha ao solicitar agendamento.');
+      setMessage(error instanceof Error ? error.message : 'Falha ao registrar agendamento.');
     }
   }
 
   return (
     <form className="action-panel" onSubmit={submit}>
-      <SectionHeader icon={<Plus />} title="Solicitar agendamento" />
+      <SectionHeader icon={<Plus />} title="Marcar Consulta / Exame" />
+      <label>
+        Paciente
+        <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name} ({u.email})
+            </option>
+          ))}
+        </select>
+      </label>
       <label>
         Unidade
         <select value={unitId} onChange={(event) => setUnitId(event.target.value)} required>
@@ -1571,11 +1753,11 @@ function AppointmentForm({ units, onCreated }: { units: Unit[]; onCreated: () =>
         </select>
       </label>
       <label>
-        Especialidade
+        Especialidade / Exame
         <input value={specialty} onChange={(event) => setSpecialty(event.target.value)} required />
       </label>
       <label>
-        Data desejada
+        Data / Hora
         <input type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} required />
       </label>
       <label>
@@ -1585,7 +1767,7 @@ function AppointmentForm({ units, onCreated }: { units: Unit[]; onCreated: () =>
       {message && <div className="form-message">{message}</div>}
       <button className="primary-action" type="submit">
         <CalendarDays size={18} />
-        Enviar pedido
+        Registrar Agendamento
       </button>
     </form>
   );

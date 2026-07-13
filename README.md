@@ -36,16 +36,18 @@ APK: 14,20 MB. SHA-256: `FC8AF2EFDE02A0136650280F82EDC485471105758AC9F9285F5D110
 - Login com Google OAuth, com criação automática do usuário no primeiro acesso.
 - Perfil do cidadão com envio de foto.
 - Resumo de consultas, resultados, triagens e posição na fila.
-- Mapa OpenStreetMap com unidades, marcadores, popups e rotas.
+- Mapa OpenStreetMap com unidades, marcadores, popups e rotas, incluindo barra de busca e animações de câmera suaves.
 - Prontuários, solicitações de triagem e fila digital.
 - Interface responsiva para celular, tablet e computador.
 - Animações suaves de interação e respeito à preferência de movimento reduzido.
+- Notificações de avisos gerais com botão para ocultar e limpar os avisos na tela.
 
-### Administração
+### Administração e Suporte Técnico
 
+- Acesso especializado: além de Administradores, há um perfil exclusivo para "Suporte Técnico", focado apenas na gestão de usuários, unidades e chamados, garantindo a privacidade dos dados médicos.
 - Indicadores operacionais e monitoramento da rede.
-- Pesquisa geral por paciente, unidade, serviço ou assunto.
-- Gestão de agendamentos, triagens e fila de atendimento.
+- Pesquisa geral por paciente (incluindo busca por CPF), unidade, serviço ou assunto.
+- Gestão de agendamentos, triagens (usando o Protocolo de Manchester) e fila de atendimento.
 - Gestão de chamados de suporte.
 - Controle de integrações e estado de sincronização.
 - Administração de usuários e permissões.

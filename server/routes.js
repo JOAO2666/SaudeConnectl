@@ -89,6 +89,7 @@ const loginSchema = z.object({
 });
 
 const appointmentSchema = z.object({
+  userId: z.string().min(1),
   unitId: z.string().min(1),
   specialty: z.string().min(2),
   scheduledAt: z.string().min(6),
@@ -115,19 +116,30 @@ const avatarSchema = z.object({
 });
 
 const recordSchema = z.object({
-  category: z.string().min(2),
-  title: z.string().min(3),
-  description: z.string().min(6),
+  userId: z.string().min(1),
+  category: z.enum(['Geral', 'Exames', 'Medicação', 'Procedimento Cirúrgico']),
+  title: z.string().min(4),
+  description: z.string().min(4),
 });
 
 const triageSchema = z.object({
-  symptoms: z.string().min(8),
-  riskLevel: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+  queueId: z.string().min(1),
+  temperature: z.string().min(1),
+  sysBp: z.string().min(1),
+  diaBp: z.string().min(1),
+  heartRate: z.string().min(1),
+  respRate: z.string().min(1),
+  spo2: z.string().min(1),
+  glucose: z.string().min(1),
+  chiefComplaint: z.string().min(4),
+  manchesterColor: z.enum(['Azul', 'Verde', 'Amarelo', 'Laranja', 'Vermelho']),
 });
 
 const queueSchema = z.object({
+  userId: z.string().min(1),
   unitId: z.string().min(1),
   service: z.string().min(2),
+  chiefComplaint: z.string().min(4),
 });
 
 const statusSchema = z.object({
@@ -392,7 +404,7 @@ router.get('/records', authRequired, (req, res) => {
 router.post('/records', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = recordSchema.parse(req.body);
-    const targetUserId = req.body.user_id || req.user.id;
+    const targetUserId = input.userId;
     const record = {
       id: crypto.randomUUID(),
       user_id: targetUserId,
@@ -422,25 +434,54 @@ router.get('/triage', authRequired, (req, res) => {
 router.post('/triage', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = triageSchema.parse(req.body);
-    const recommendation = recommendationForRisk(input.riskLevel);
-    const targetUserId = req.body.user_id || req.user.id;
-    const unitId = req.body.unit_id || null;
+    
+    // Get original queue entry
+    const queueEntry = db.prepare('SELECT * FROM queue_entries WHERE id = ?').get(input.queueId);
+    if (!queueEntry) {
+      return res.status(404).json({ message: 'Entrada na fila não encontrada.' });
+    }
+
+    // Determine deadline time based on Manchester Color
+    const delays = {
+      'Vermelho': 0,
+      'Laranja': 10,
+      'Amarelo': 50,
+      'Verde': 120,
+      'Azul': 240
+    };
+    const delayMinutes = delays[input.manchesterColor] || 0;
+    const deadlineTime = new Date(Date.now() + delayMinutes * 60000).toISOString();
+    const triageTime = now();
+
     const triageCase = {
       id: crypto.randomUUID(),
-      user_id: targetUserId,
-      symptoms: input.symptoms,
-      risk_level: input.riskLevel,
-      status: input.riskLevel === 'critical' ? 'in_service' : 'waiting',
-      recommendation,
+      user_id: queueEntry.user_id,
+      queue_id: input.queueId,
+      temperature: input.temperature,
+      sys_bp: input.sysBp,
+      dia_bp: input.diaBp,
+      heart_rate: input.heartRate,
+      resp_rate: input.respRate,
+      spo2: input.spo2,
+      glucose: input.glucose,
+      chief_complaint: input.chiefComplaint,
+      manchester_color: input.manchesterColor,
+      status: 'resolved',
       creator_name: req.user.name,
-      unit_id: unitId,
-      created_at: now(),
+      created_at: triageTime,
     };
 
     db.prepare(`
-      INSERT INTO triage_cases (id, user_id, symptoms, risk_level, status, recommendation, creator_name, unit_id, created_at)
-      VALUES (@id, @user_id, @symptoms, @risk_level, @status, @recommendation, @creator_name, @unit_id, @created_at)
+      INSERT INTO triage_cases (id, user_id, queue_id, temperature, sys_bp, dia_bp, heart_rate, resp_rate, spo2, glucose, chief_complaint, manchester_color, status, created_at, creator_name)
+      VALUES (@id, @user_id, @queue_id, @temperature, @sys_bp, @dia_bp, @heart_rate, @resp_rate, @spo2, @glucose, @chief_complaint, @manchester_color, @status, @created_at, @creator_name)
     `).run(triageCase);
+
+    // Update queue entry
+    db.prepare(`
+      UPDATE queue_entries 
+      SET status = 'Triagem realizada', triage_color = ?, triage_time = ?, deadline_time = ?
+      WHERE id = ?
+    `).run(input.manchesterColor, triageTime, deadlineTime, input.queueId);
 
     logAudit(req.user.id, 'created', 'triage_cases', triageCase.id);
     return res.status(201).json({ triage: triageCase });
@@ -453,29 +494,31 @@ router.get('/queue', authRequired, (req, res) => {
   res.json({ queue: queueForUser(req.user.id) });
 });
 
-router.post('/queue', authRequired, (req, res, next) => {
+router.post('/queue', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = queueSchema.parse(req.body);
     const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(input.unitId);
     if (!unit) return res.status(404).json({ message: 'Unidade não encontrada.' });
 
     const nextPosition =
-      db.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS next FROM queue_entries WHERE unit_id = ? AND status = 'waiting'")
+      db.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS next FROM queue_entries WHERE unit_id = ? AND status = 'Aguardando Triagem'")
         .get(input.unitId).next || 1;
+    
     const queueEntry = {
       id: crypto.randomUUID(),
-      user_id: req.user.id,
+      user_id: input.userId,
       unit_id: input.unitId,
       service: input.service,
+      chief_complaint: input.chiefComplaint,
       position: nextPosition,
       estimated_minutes: nextPosition * 9 + 7,
-      status: 'waiting',
+      status: 'Aguardando Triagem',
       created_at: now(),
     };
 
     db.prepare(`
-      INSERT INTO queue_entries (id, user_id, unit_id, service, position, estimated_minutes, status, created_at)
-      VALUES (@id, @user_id, @unit_id, @service, @position, @estimated_minutes, @status, @created_at)
+      INSERT INTO queue_entries (id, user_id, unit_id, service, chief_complaint, position, estimated_minutes, status, created_at)
+      VALUES (@id, @user_id, @unit_id, @service, @chief_complaint, @position, @estimated_minutes, @status, @created_at)
     `).run(queueEntry);
 
     logAudit(req.user.id, 'created', 'queue_entries', queueEntry.id);
@@ -485,7 +528,7 @@ router.post('/queue', authRequired, (req, res, next) => {
   }
 });
 
-router.post('/appointments', authRequired, (req, res, next) => {
+router.post('/appointments', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = appointmentSchema.parse(req.body);
     const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(input.unitId);
@@ -496,12 +539,12 @@ router.post('/appointments', authRequired, (req, res, next) => {
 
     const appointment = {
       id: crypto.randomUUID(),
-      user_id: req.user.id,
+      user_id: input.userId,
       unit_id: input.unitId,
       specialty: input.specialty,
       professional: 'A definir',
       scheduled_at: new Date(input.scheduledAt).toISOString(),
-      status: 'pending',
+      status: 'confirmed',
       reason: input.reason,
       notes: '',
       created_at: now(),
@@ -518,6 +561,7 @@ router.post('/appointments', authRequired, (req, res, next) => {
     return next(error);
   }
 });
+
 
 router.post('/support', authRequired, (req, res, next) => {
   try {

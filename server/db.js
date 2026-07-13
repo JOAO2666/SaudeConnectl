@@ -3,18 +3,44 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import Database from 'better-sqlite3';
+import { createClient } from '@libsql/client';
 
 const defaultDataDir = process.env.VERCEL
   ? path.join(os.tmpdir(), 'saudeconnect-data')
   : path.resolve(process.cwd(), 'data');
 
 export const dataDir = process.env.DATA_DIR || defaultDataDir;
-fs.mkdirSync(dataDir, { recursive: true });
 
-export const db = new Database(path.join(dataDir, 'saudeconnect.sqlite'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+if (!process.env.TURSO_DATABASE_URL) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+export const db = createClient({
+  url: process.env.TURSO_DATABASE_URL || `file:${path.join(dataDir, 'saudeconnect.sqlite')}`,
+  authToken: process.env.TURSO_AUTH_TOKEN
+});
+
+function normalizeArgs(args) {
+  if (Array.isArray(args) && args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0]) && !(args[0] instanceof Date)) {
+    return args[0];
+  }
+  return args;
+}
+
+export async function dbGet(sql, args = []) {
+  const result = await db.execute({ sql, args: normalizeArgs(args) });
+  return result.rows[0];
+}
+
+export async function dbAll(sql, args = []) {
+  const result = await db.execute({ sql, args: normalizeArgs(args) });
+  return result.rows;
+}
+
+export async function dbRun(sql, args = []) {
+  const result = await db.execute({ sql, args: normalizeArgs(args) });
+  return { changes: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
+}
 
 const now = () => new Date().toISOString();
 
@@ -33,8 +59,8 @@ export function publicUser(user) {
   };
 }
 
-export function initDb() {
-  db.exec(`
+export async function initDb() {
+  await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -199,29 +225,30 @@ export function initDb() {
     );
   `);
 
-  ensureColumn('units', 'distance_km', 'REAL NOT NULL DEFAULT 0');
-  ensureColumn('units', 'hours', "TEXT NOT NULL DEFAULT 'Seg-Sex: 7h às 17h'");
-  ensureColumn('units', 'lat', 'REAL NOT NULL DEFAULT -23.5505');
-  ensureColumn('units', 'lng', 'REAL NOT NULL DEFAULT -46.6333');
-  ensureColumn('users', 'last_seen', 'TEXT');
-  ensureColumn('users', 'cpf', 'TEXT');
-  ensureColumn('triage_cases', 'creator_name', 'TEXT');
-  ensureColumn('triage_cases', 'unit_id', 'TEXT');
-  ensureColumn('records', 'creator_name', 'TEXT');
+  await ensureColumn('units', 'distance_km', 'REAL NOT NULL DEFAULT 0');
+  await ensureColumn('units', 'hours', "TEXT NOT NULL DEFAULT 'Seg-Sex: 7h às 17h'");
+  await ensureColumn('units', 'lat', 'REAL NOT NULL DEFAULT -23.5505');
+  await ensureColumn('units', 'lng', 'REAL NOT NULL DEFAULT -46.6333');
+  await ensureColumn('users', 'last_seen', 'TEXT');
+  await ensureColumn('users', 'cpf', 'TEXT');
+  await ensureColumn('triage_cases', 'creator_name', 'TEXT');
+  await ensureColumn('triage_cases', 'unit_id', 'TEXT');
+  await ensureColumn('records', 'creator_name', 'TEXT');
 
-  seedDb();
+  await seedDb();
 }
 
-function ensureColumn(table, column, definition) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name);
+async function ensureColumn(table, column, definition) {
+  const result = await db.execute(`PRAGMA table_info(${table})`);
+  const columns = result.rows.map((item) => item.name);
   if (!columns.includes(column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }
 
-function seedDb() {
+async function seedDb() {
   const seedTime = now();
-  upsertUser({
+  await upsertUser({
     id: 'usr_admin',
     name: 'Administrador',
     email: 'admin@saudeconnect.com',
@@ -233,7 +260,7 @@ function seedDb() {
     last_seen: seedTime,
   });
 
-  upsertUser({
+  await upsertUser({
     id: 'usr_paciente',
     name: 'Paciente',
     email: 'paciente@saudeconnect.com',
@@ -245,7 +272,7 @@ function seedDb() {
     last_seen: seedTime,
   });
 
-  [
+  const unitsData = [
     {
       id: 'unit_upa_petrolina',
       name: 'UPA Petrolina',
@@ -287,23 +314,8 @@ function seedDb() {
       status: 'Aberto',
       distance_km: 4.8,
       hours: '24 horas',
-      lat: -9.441179482788714,
-      lng: -40.493536160223634,
-      services: ['Emergencia', 'Pediatria'],
-    },
-    {
-      id: 'unit_hu_univasf',
-      name: 'HU-Univasf',
-      type: 'Hospital',
-      city: 'Petrolina',
-      district: 'Centro',
-      address: 'Avenida José de Sá Maniçoba, s/n',
-      phone: '(87) 2101-6500',
-      status: 'Aberto',
-      distance_km: 1.5,
-      hours: '24 horas',
-      lat: -9.39241419068415,
-      lng: -40.499105024976735,
+      lat: -9.38978519068669,
+      lng: -40.524348024976725,
       services: ['Traumatologia', 'Urgencia', 'Cirurgia'],
     },
     {
@@ -321,36 +333,35 @@ function seedDb() {
       lng: -40.5109149,
       services: ['Clinica Medica', 'Cirurgia Geral'],
     }
-  ].forEach(upsertUnit);
+  ];
+
+  for (const unit of unitsData) {
+    await upsertUnit(unit);
+  }
 }
 
-function seedOnce(table, id, insert) {
-  const exists = db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(id);
-  if (!exists) insert();
-}
-
-function upsertUser(user) {
-  const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(user.id);
+async function upsertUser(user) {
+  const exists = await dbGet('SELECT id FROM users WHERE id = :id', { id: user.id });
   if (exists) {
-    db.prepare(`
+    await dbRun(`
       UPDATE users
-      SET name = @name, email = @email, password_hash = @password_hash, role = @role, avatar = @avatar,
-          last_login = COALESCE(@last_login, last_login), last_seen = COALESCE(@last_seen, last_seen), cpf = COALESCE(@cpf, cpf)
-      WHERE id = @id
-    `).run({ cpf: null, ...user });
+      SET name = :name, email = :email, password_hash = :password_hash, role = :role, avatar = :avatar,
+          last_login = COALESCE(:last_login, last_login), last_seen = COALESCE(:last_seen, last_seen), cpf = COALESCE(:cpf, cpf)
+      WHERE id = :id
+    `, { cpf: null, ...user });
     return;
   }
 
-  db.prepare(`
+  await dbRun(`
     INSERT INTO users (id, name, email, password_hash, role, avatar, provider, created_at, last_login, last_seen, cpf)
-    VALUES (@id, @name, @email, @password_hash, @role, @avatar, 'local', @created_at, @last_login, @last_seen, @cpf)
-  `).run({ cpf: null, ...user });
+    VALUES (:id, :name, :email, :password_hash, :role, :avatar, 'local', :created_at, :last_login, :last_seen, :cpf)
+  `, { cpf: null, ...user });
 }
 
-function upsertUnit(unit) {
-  db.prepare(`
+async function upsertUnit(unit) {
+  await dbRun(`
     INSERT INTO units (id, name, type, city, district, address, phone, status, services, distance_km, hours, lat, lng, created_at)
-    VALUES (@id, @name, @type, @city, @district, @address, @phone, @status, @services, @distance_km, @hours, @lat, @lng, @created_at)
+    VALUES (:id, :name, :type, :city, :district, :address, :phone, :status, :services, :distance_km, :hours, :lat, :lng, :created_at)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       type = excluded.type,
@@ -364,17 +375,17 @@ function upsertUnit(unit) {
       hours = excluded.hours,
       lat = excluded.lat,
       lng = excluded.lng
-  `).run({
+  `, {
     ...unit,
     services: JSON.stringify(unit.services),
     created_at: now(),
   });
 }
 
-function upsertProfile(profile) {
-  db.prepare(`
+export async function upsertProfile(profile) {
+  await dbRun(`
     INSERT INTO patient_profiles (user_id, cpf, birth_date, phone, sus_card, address, emergency_contact, updated_at)
-    VALUES (@user_id, @cpf, @birth_date, @phone, @sus_card, @address, @emergency_contact, @updated_at)
+    VALUES (:user_id, :cpf, :birth_date, :phone, :sus_card, :address, :emergency_contact, :updated_at)
     ON CONFLICT(user_id) DO UPDATE SET
       cpf = excluded.cpf,
       birth_date = excluded.birth_date,
@@ -383,14 +394,14 @@ function upsertProfile(profile) {
       address = excluded.address,
       emergency_contact = excluded.emergency_contact,
       updated_at = excluded.updated_at
-  `).run(profile);
+  `, profile);
 }
 
-export function logAudit(actorId, action, entity, entityId) {
-  db.prepare(`
+export async function logAudit(actorId, action, entity, entityId) {
+  await dbRun(`
     INSERT INTO audit_logs (id, actor_id, action, entity, entity_id, created_at)
-    VALUES (@id, @actor_id, @action, @entity, @entity_id, @created_at)
-  `).run({
+    VALUES (:id, :actor_id, :action, :entity, :entity_id, :created_at)
+  `, {
     id: crypto.randomUUID(),
     actor_id: actorId,
     action,

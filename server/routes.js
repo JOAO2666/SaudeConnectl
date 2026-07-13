@@ -7,7 +7,7 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { z } from 'zod';
 import { authRequired, adminRequired, staffRequired, revokeCurrentSession, signToken } from './auth.js';
-import { dataDir, db, logAudit, publicUser } from './db.js';
+import { dataDir, db, logAudit, publicUser, dbGet, dbAll, dbRun } from './db.js';
 
 const router = express.Router();
 const now = () => new Date().toISOString();
@@ -25,21 +25,23 @@ if (googleEnabled) {
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
         callbackURL: process.env.GOOGLE_CALLBACK_URL,
       },
-      (_accessToken, _refreshToken, profile, done) => {
+      async (_accessToken, _refreshToken, profile, done) => {
         try {
           const email = profile.emails?.[0]?.value?.toLowerCase();
           if (!email) return done(null, false);
 
-          const existing = db
-            .prepare('SELECT * FROM users WHERE google_id = ? OR email = ?')
-            .get(profile.id, email);
+          const existing = await dbGet(
+            'SELECT * FROM users WHERE google_id = ? OR email = ?',
+            [profile.id, email]
+          );
 
           if (existing) {
-            db.prepare(
+            await dbRun(
               'UPDATE users SET google_id = ?, provider = ?, avatar = COALESCE(avatar, ?), last_login = ? WHERE id = ?',
-            ).run(profile.id, 'google', initials(profile.displayName), now(), existing.id);
+              [profile.id, 'google', initials(profile.displayName), now(), existing.id]
+            );
 
-            const refreshed = db.prepare('SELECT * FROM users WHERE id = ?').get(existing.id);
+            const refreshed = await dbGet('SELECT * FROM users WHERE id = ?', [existing.id]);
             logAudit(existing.id, 'logged_in_google', 'users', existing.id);
             return done(null, { ...refreshed, is_new_user: false });
           }
@@ -52,12 +54,12 @@ if (googleEnabled) {
             created_at: now(),
           };
 
-          db.prepare(`
+          await dbRun(`
             INSERT INTO users (id, name, email, password_hash, role, avatar, provider, google_id, created_at, last_login)
             VALUES (@id, @name, @email, NULL, 'user', @avatar, 'google', @google_id, @created_at, @last_login)
-          `).run({ ...user, google_id: profile.id, last_login: user.created_at });
+          `, { ...user, google_id: profile.id, last_login: user.created_at });
 
-          const created = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+          const created = await dbGet('SELECT * FROM users WHERE id = ?', [user.id]);
           logAudit(user.id, 'registered_google', 'users', user.id);
           return done(null, { ...created, is_new_user: true });
         } catch (error) {
@@ -156,32 +158,33 @@ const announcementSchema = z.object({
   audience: z.enum(['all', 'users', 'admins']).default('all'),
 });
 
-router.get('/health', (_req, res) => {
+router.get('/health', async (_req, res) => {
   res.json({ ok: true, service: 'SaudeConnect API', time: now() });
 });
 
-router.get('/bootstrap', (_req, res) => {
+router.get('/bootstrap', async (_req, res) => {
   res.json({
     googleEnabled,
   });
 });
 
-router.get('/notifications', authRequired, (req, res) => {
+router.get('/notifications', authRequired, async (req, res) => {
   const audiences =
     req.user.role === 'admin' ? ['all', 'users', 'admins'] : ['all', 'users'];
   const placeholders = audiences.map(() => '?').join(', ');
-  const announcements = db
-    .prepare(`SELECT * FROM announcements WHERE audience IN (${placeholders}) ORDER BY published_at DESC LIMIT 12`)
-    .all(...audiences);
+  const announcements = await dbAll(
+    `SELECT * FROM announcements WHERE audience IN (${placeholders}) ORDER BY published_at DESC LIMIT 12`,
+    [...audiences]
+  );
 
   res.json({ announcements });
 });
 
-router.post('/auth/register', (req, res, next) => {
+router.post('/auth/register', async (req, res, next) => {
   try {
     const input = registerSchema.parse(req.body);
     const email = input.email.toLowerCase();
-    const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const exists = await dbGet('SELECT id FROM users WHERE email = ?', [email]);
 
     if (exists) {
       return res.status(409).json({ message: 'E-mail ja cadastrado.' });
@@ -198,10 +201,10 @@ router.post('/auth/register', (req, res, next) => {
       last_login: now(),
     };
 
-    db.prepare(`
+    await dbRun(`
       INSERT INTO users (id, name, email, password_hash, role, avatar, provider, created_at, last_login)
       VALUES (@id, @name, @email, @password_hash, @role, @avatar, 'local', @created_at, @last_login)
-    `).run(user);
+    `, [user]);
 
     const token = signToken(user, req);
     logAudit(user.id, 'registered', 'users', user.id);
@@ -211,18 +214,18 @@ router.post('/auth/register', (req, res, next) => {
   }
 });
 
-router.post('/auth/login', (req, res, next) => {
+router.post('/auth/login', async (req, res, next) => {
   try {
     const input = loginSchema.parse(req.body);
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(input.email.toLowerCase());
+    const user = await dbGet('SELECT * FROM users WHERE email = ?', [input.email.toLowerCase()]);
 
     if (!user || !user.password_hash || !bcrypt.compareSync(input.password, user.password_hash)) {
       return res.status(401).json({ message: 'Credenciais invalidas.' });
     }
 
-    db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(now(), user.id);
-    db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(now(), user.id);
-    const refreshed = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+    await dbRun('UPDATE users SET last_login = ? WHERE id = ?', [now(), user.id]);
+    await dbRun('UPDATE users SET last_seen = ? WHERE id = ?', [now(), user.id]);
+    const refreshed = await dbGet('SELECT * FROM users WHERE id = ?', [user.id]);
     logAudit(user.id, 'logged_in', 'users', user.id);
     return res.json({ user: publicUser(refreshed), token: signToken(refreshed, req) });
   } catch (error) {
@@ -230,7 +233,7 @@ router.post('/auth/login', (req, res, next) => {
   }
 });
 
-router.get('/auth/google', (req, res, next) => {
+router.get('/auth/google', async (req, res, next) => {
   if (!googleEnabled) {
     return res.status(503).json({
       message: 'Login Google indisponivel. Configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET e GOOGLE_CALLBACK_URL.',
@@ -243,7 +246,7 @@ router.get('/auth/google', (req, res, next) => {
 router.get(
   '/auth/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: '/login?oauth=failed' }),
-  (req, res) => {
+  async (req, res) => {
     const token = signToken(req.user, req);
     const forwardedProto = req.get('x-forwarded-proto') || req.protocol;
     const forwardedHost = req.get('x-forwarded-host') || req.get('host');
@@ -254,11 +257,11 @@ router.get(
   },
 );
 
-router.get('/auth/me', authRequired, (req, res) => {
+router.get('/auth/me', authRequired, async (req, res) => {
   res.json({ user: req.publicUser });
 });
 
-router.post('/auth/avatar', authRequired, (req, res, next) => {
+router.post('/auth/avatar', authRequired, async (req, res, next) => {
   try {
     const { imageData } = avatarSchema.parse(req.body);
     const match = imageData.match(/^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=]+)$/);
@@ -291,7 +294,7 @@ router.post('/auth/avatar', authRequired, (req, res, next) => {
     const avatarUrl = process.env.VERCEL
       ? `/api/uploads/avatars/${fileName}`
       : `/uploads/avatars/${fileName}`;
-    db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatarUrl, req.user.id);
+    await dbRun('UPDATE users SET avatar = ? WHERE id = ?', [avatarUrl, req.user.id]);
 
     if (/^\/(?:api\/)?uploads\/avatars\//.test(previousAvatar || '')) {
       const previousFile = path.join(
@@ -302,40 +305,44 @@ router.post('/auth/avatar', authRequired, (req, res, next) => {
     }
 
     logAudit(req.user.id, 'updated_avatar', 'users', req.user.id);
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const user = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     return res.json({ user: publicUser(user) });
   } catch (error) {
     return next(error);
   }
 });
 
-router.post('/auth/logout', authRequired, (req, res) => {
+router.post('/auth/logout', authRequired, async (req, res) => {
   revokeCurrentSession(req);
   logAudit(req.user.id, 'logged_out', 'auth_sessions', req.authSession.id);
   res.json({ ok: true });
 });
 
-router.get('/units', authRequired, (_req, res) => {
-  const units = listUnits();
+router.get('/units', authRequired, async (_req, res) => {
+  const units = await listUnits();
   res.json({ units });
 });
 
-router.get('/dashboard', authRequired, (req, res) => {
-  const appointments = appointmentsForUser(req.user.id);
-  const exams = db.prepare('SELECT * FROM exams WHERE user_id = ? ORDER BY requested_at DESC').all(req.user.id);
+router.get('/dashboard', authRequired, async (req, res) => {
+  const appointments = await appointmentsForUser(req.user.id);
+  const exams = await dbAll(
+    'SELECT * FROM exams WHERE user_id = ? ORDER BY requested_at DESC',
+    [req.user.id]
+  );
   const records =
-    req.user.role === 'admin' ? allRecords() : recordsForUser(req.user.id);
-  const profile = profileForUser(req.user.id);
-  const triage = req.user.role === 'admin' ? allTriageCases() : triageForUser(req.user.id);
-  const queue = req.user.role === 'admin' ? allQueueEntries() : queueForUser(req.user.id);
-  const tickets = db
-    .prepare('SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC')
-    .all(req.user.id);
-  const units = listUnits();
-  const announcements = db
-    .prepare("SELECT * FROM announcements WHERE audience IN ('all', 'users') ORDER BY published_at DESC LIMIT 4")
-    .all();
-  const users = req.user.role === 'admin' ? db.prepare('SELECT id, name, email FROM users ORDER BY name ASC').all() : [];
+    req.user.role === 'admin' ? await allRecords() : await recordsForUser(req.user.id);
+  const profile = await profileForUser(req.user.id);
+  const triage = req.user.role === 'admin' ? await allTriageCases() : await triageForUser(req.user.id);
+  const queue = req.user.role === 'admin' ? await allQueueEntries() : await queueForUser(req.user.id);
+  const tickets = await dbAll(
+    'SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC',
+    [req.user.id]
+  );
+  const units = await listUnits();
+  const announcements = await dbAll(
+    "SELECT * FROM announcements WHERE audience IN ('all', 'users') ORDER BY published_at DESC LIMIT 4"
+  );
+  const users = req.user.role === 'admin' ? await dbAll('SELECT id, name, email, role FROM users ORDER BY name ASC') : [];
 
   res.json({
     user: req.publicUser,
@@ -360,14 +367,14 @@ router.get('/dashboard', authRequired, (req, res) => {
   });
 });
 
-router.get('/profile', authRequired, (req, res) => {
-  res.json({ profile: profileForUser(req.user.id) });
+router.get('/profile', authRequired, async (req, res) => {
+  res.json({ profile: await profileForUser(req.user.id) });
 });
 
-router.put('/profile', authRequired, (req, res, next) => {
+router.put('/profile', authRequired, async (req, res, next) => {
   try {
     const input = profileSchema.parse(req.body);
-    db.prepare(`
+    await dbRun(`
       INSERT INTO patient_profiles (user_id, cpf, birth_date, phone, sus_card, address, emergency_contact, updated_at)
       VALUES (@user_id, @cpf, @birth_date, @phone, @sus_card, @address, @emergency_contact, @updated_at)
       ON CONFLICT(user_id) DO UPDATE SET
@@ -378,7 +385,7 @@ router.put('/profile', authRequired, (req, res, next) => {
         address = excluded.address,
         emergency_contact = excluded.emergency_contact,
         updated_at = excluded.updated_at
-    `).run({
+    `, {
       user_id: req.user.id,
       cpf: input.cpf,
       birth_date: input.birthDate,
@@ -390,18 +397,21 @@ router.put('/profile', authRequired, (req, res, next) => {
     });
 
     logAudit(req.user.id, 'updated', 'patient_profiles', req.user.id);
-    return res.json({ profile: profileForUser(req.user.id) });
+    return res.json({ profile: await profileForUser(req.user.id) });
   } catch (error) {
     return next(error);
   }
 });
 
-router.get('/records', authRequired, (req, res) => {
-  const records = db.prepare('SELECT * FROM records WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
+router.get('/records', authRequired, async (req, res) => {
+  const records = await dbAll(
+    'SELECT * FROM records WHERE user_id = ? ORDER BY created_at DESC',
+    [req.user.id]
+  );
   res.json({ records });
 });
 
-router.post('/records', authRequired, adminRequired, (req, res, next) => {
+router.post('/records', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = recordSchema.parse(req.body);
     const targetUserId = input.userId;
@@ -415,10 +425,10 @@ router.post('/records', authRequired, adminRequired, (req, res, next) => {
       created_at: now(),
     };
 
-    db.prepare(`
+    await dbRun(`
       INSERT INTO records (id, user_id, category, title, description, creator_name, created_at)
       VALUES (@id, @user_id, @category, @title, @description, @creator_name, @created_at)
-    `).run(record);
+    `, [record]);
 
     logAudit(req.user.id, 'created', 'records', record.id);
     return res.status(201).json({ record });
@@ -427,16 +437,16 @@ router.post('/records', authRequired, adminRequired, (req, res, next) => {
   }
 });
 
-router.get('/triage', authRequired, (req, res) => {
-  res.json({ triage: triageForUser(req.user.id) });
+router.get('/triage', authRequired, async (req, res) => {
+  res.json({ triage: await triageForUser(req.user.id) });
 });
 
-router.post('/triage', authRequired, adminRequired, (req, res, next) => {
+router.post('/triage', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = triageSchema.parse(req.body);
     
     // Get original queue entry
-    const queueEntry = db.prepare('SELECT * FROM queue_entries WHERE id = ?').get(input.queueId);
+    const queueEntry = await dbGet('SELECT * FROM queue_entries WHERE id = ?', [input.queueId]);
     if (!queueEntry) {
       return res.status(404).json({ message: 'Entrada na fila não encontrada.' });
     }
@@ -471,17 +481,17 @@ router.post('/triage', authRequired, adminRequired, (req, res, next) => {
       created_at: triageTime,
     };
 
-    db.prepare(`
+    await dbRun(`
       INSERT INTO triage_cases (id, user_id, queue_id, temperature, sys_bp, dia_bp, heart_rate, resp_rate, spo2, glucose, chief_complaint, manchester_color, status, created_at, creator_name)
       VALUES (@id, @user_id, @queue_id, @temperature, @sys_bp, @dia_bp, @heart_rate, @resp_rate, @spo2, @glucose, @chief_complaint, @manchester_color, @status, @created_at, @creator_name)
-    `).run(triageCase);
+    `, [triageCase]);
 
     // Update queue entry
-    db.prepare(`
+    await dbRun(`
       UPDATE queue_entries 
       SET status = 'waiting_service', triage_color = ?, triage_time = ?, deadline_time = ?
       WHERE id = ?
-    `).run(input.manchesterColor, triageTime, deadlineTime, input.queueId);
+    `, [input.manchesterColor, triageTime, deadlineTime, input.queueId]);
 
     logAudit(req.user.id, 'created', 'triage_cases', triageCase.id);
     return res.status(201).json({ triage: triageCase });
@@ -490,19 +500,21 @@ router.post('/triage', authRequired, adminRequired, (req, res, next) => {
   }
 });
 
-router.get('/queue', authRequired, (req, res) => {
-  res.json({ queue: queueForUser(req.user.id) });
+router.get('/queue', authRequired, async (req, res) => {
+  res.json({ queue: await queueForUser(req.user.id) });
 });
 
-router.post('/queue', authRequired, adminRequired, (req, res, next) => {
+router.post('/queue', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = queueSchema.parse(req.body);
-    const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(input.unitId);
+    const unit = await dbGet('SELECT * FROM units WHERE id = ?', [input.unitId]);
     if (!unit) return res.status(404).json({ message: 'Unidade não encontrada.' });
 
     const nextPosition =
-      db.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS next FROM queue_entries WHERE unit_id = ? AND status = 'waiting_triage'")
-        .get(input.unitId).next || 1;
+      (await dbGet(
+        "SELECT COALESCE(MAX(position), 0) + 1 AS next FROM queue_entries WHERE unit_id = ? AND status = 'waiting_triage'",
+        [input.unitId]
+      )).next || 1;
     
     const queueEntry = {
       id: crypto.randomUUID(),
@@ -516,22 +528,22 @@ router.post('/queue', authRequired, adminRequired, (req, res, next) => {
       created_at: now(),
     };
 
-    db.prepare(`
+    await dbRun(`
       INSERT INTO queue_entries (id, user_id, unit_id, service, chief_complaint, position, estimated_minutes, status, created_at)
       VALUES (@id, @user_id, @unit_id, @service, @chief_complaint, @position, @estimated_minutes, @status, @created_at)
-    `).run(queueEntry);
+    `, [queueEntry]);
 
     logAudit(req.user.id, 'created', 'queue_entries', queueEntry.id);
-    return res.status(201).json({ queue: queueById(queueEntry.id) });
+    return res.status(201).json({ queue: await queueById(queueEntry.id) });
   } catch (error) {
     return next(error);
   }
 });
 
-router.post('/appointments', authRequired, adminRequired, (req, res, next) => {
+router.post('/appointments', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = appointmentSchema.parse(req.body);
-    const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(input.unitId);
+    const unit = await dbGet('SELECT * FROM units WHERE id = ?', [input.unitId]);
 
     if (!unit) {
       return res.status(404).json({ message: 'Unidade nao encontrada.' });
@@ -550,20 +562,20 @@ router.post('/appointments', authRequired, adminRequired, (req, res, next) => {
       created_at: now(),
     };
 
-    db.prepare(`
+    await dbRun(`
       INSERT INTO appointments (id, user_id, unit_id, specialty, professional, scheduled_at, status, reason, notes, created_at)
       VALUES (@id, @user_id, @unit_id, @specialty, @professional, @scheduled_at, @status, @reason, @notes, @created_at)
-    `).run(appointment);
+    `, [appointment]);
 
     logAudit(req.user.id, 'created', 'appointments', appointment.id);
-    return res.status(201).json({ appointment: appointmentById(appointment.id) });
+    return res.status(201).json({ appointment: await appointmentById(appointment.id) });
   } catch (error) {
     return next(error);
   }
 });
 
 
-router.post('/support', authRequired, (req, res, next) => {
+router.post('/support', authRequired, async (req, res, next) => {
   try {
     const input = ticketSchema.parse(req.body);
     const ticket = {
@@ -576,10 +588,10 @@ router.post('/support', authRequired, (req, res, next) => {
       created_at: now(),
     };
 
-    db.prepare(`
+    await dbRun(`
       INSERT INTO support_tickets (id, user_id, subject, message, status, priority, created_at)
       VALUES (@id, @user_id, @subject, @message, @status, @priority, @created_at)
-    `).run(ticket);
+    `, [ticket]);
 
     logAudit(req.user.id, 'created', 'support_tickets', ticket.id);
     return res.status(201).json({ ticket });
@@ -588,14 +600,14 @@ router.post('/support', authRequired, (req, res, next) => {
   }
 });
 
-router.get('/admin/overview', authRequired, staffRequired, (req, res) => {
+router.get('/admin/overview', authRequired, staffRequired, async (req, res) => {
   const isSupport = req.user.role === 'support';
   const unitId = req.query.unit_id;
 
   let overview = {
-    users: count('users'),
-    openTickets: db.prepare("SELECT COUNT(*) AS total FROM support_tickets WHERE status != 'resolved'").get().total,
-    integrationsOnline: db.prepare("SELECT COUNT(*) AS total FROM integrations WHERE status = 'online'").get().total,
+    users: await count('users'),
+    openTickets: (await dbGet("SELECT COUNT(*) AS total FROM support_tickets WHERE status != 'resolved'")).total,
+    integrationsOnline: (await dbGet("SELECT COUNT(*) AS total FROM integrations WHERE status = 'online'")).total,
     appointments: 0,
     triageWaiting: 0,
     queueWaiting: 0,
@@ -603,62 +615,93 @@ router.get('/admin/overview', authRequired, staffRequired, (req, res) => {
 
   if (!isSupport) {
     if (unitId) {
-      overview.appointments = db.prepare("SELECT COUNT(*) AS total FROM appointments WHERE unit_id = ?").get(unitId).total;
-      overview.queueWaiting = db.prepare("SELECT COUNT(*) AS total FROM queue_entries WHERE status = 'waiting' AND unit_id = ?").get(unitId).total;
+      overview.appointments = (await dbGet("SELECT COUNT(*) AS total FROM appointments WHERE unit_id = ?", [unitId])).total;
+      overview.queueWaiting = (await dbGet(
+        "SELECT COUNT(*) AS total FROM queue_entries WHERE status = 'waiting' AND unit_id = ?",
+        [unitId]
+      )).total;
       try {
-        overview.triageWaiting = db.prepare("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved' AND unit_id = ?").get(unitId).total;
+        overview.triageWaiting = (await dbGet(
+          "SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved' AND unit_id = ?",
+          [unitId]
+        )).total;
       } catch (e) {
-        overview.triageWaiting = db.prepare("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved'").get().total;
+        overview.triageWaiting = (await dbGet("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved'")).total;
       }
     } else {
-      overview.appointments = count('appointments');
-      overview.queueWaiting = db.prepare("SELECT COUNT(*) AS total FROM queue_entries WHERE status = 'waiting'").get().total;
-      overview.triageWaiting = db.prepare("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved'").get().total;
+      overview.appointments = await count('appointments');
+      overview.queueWaiting = (await dbGet("SELECT COUNT(*) AS total FROM queue_entries WHERE status = 'waiting'")).total;
+      overview.triageWaiting = (await dbGet("SELECT COUNT(*) AS total FROM triage_cases WHERE status != 'resolved'")).total;
     }
   }
 
   const appointments = isSupport ? [] : (unitId 
-    ? db.prepare(`SELECT appointments.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM appointments JOIN users ON users.id = appointments.user_id JOIN units ON units.id = appointments.unit_id WHERE appointments.unit_id = ? ORDER BY scheduled_at DESC LIMIT 12`).all(unitId)
-    : db.prepare(`SELECT appointments.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM appointments JOIN users ON users.id = appointments.user_id JOIN units ON units.id = appointments.unit_id ORDER BY scheduled_at DESC LIMIT 12`).all());
+    ? await dbAll(
+    `SELECT appointments.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM appointments JOIN users ON users.id = appointments.user_id JOIN units ON units.id = appointments.unit_id WHERE appointments.unit_id = ? ORDER BY scheduled_at DESC LIMIT 12`,
+    [unitId]
+  )
+    : await dbAll(
+    `SELECT appointments.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM appointments JOIN users ON users.id = appointments.user_id JOIN units ON units.id = appointments.unit_id ORDER BY scheduled_at DESC LIMIT 12`
+  ));
 
-  const users = db.prepare('SELECT id, name, email, role, avatar, provider, created_at, last_login, last_seen, cpf FROM users ORDER BY created_at DESC').all();
+  const users = await dbAll(
+    'SELECT id, name, email, role, avatar, provider, created_at, last_login, last_seen, cpf FROM users ORDER BY created_at DESC'
+  );
 
-  const tickets = db.prepare(`SELECT support_tickets.*, users.name AS user_name, users.email AS user_email FROM support_tickets JOIN users ON users.id = support_tickets.user_id ORDER BY created_at DESC`).all();
+  const tickets = await dbAll(
+    `SELECT support_tickets.*, users.name AS user_name, users.email AS user_email FROM support_tickets JOIN users ON users.id = support_tickets.user_id ORDER BY created_at DESC`
+  );
 
   let triage = [];
   if (!isSupport) {
     try {
       triage = unitId 
-        ? db.prepare(`SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id WHERE triage_cases.unit_id = ? ORDER BY triage_cases.created_at DESC`).all(unitId)
-        : db.prepare(`SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id ORDER BY triage_cases.created_at DESC`).all();
+        ? await dbAll(
+        `SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id WHERE triage_cases.unit_id = ? ORDER BY triage_cases.created_at DESC`,
+        [unitId]
+      )
+        : await dbAll(
+        `SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id ORDER BY triage_cases.created_at DESC`
+      );
     } catch (e) {
-      triage = db.prepare(`SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id ORDER BY triage_cases.created_at DESC`).all();
+      triage = await dbAll(
+        `SELECT triage_cases.*, users.name AS user_name, users.email AS user_email FROM triage_cases JOIN users ON users.id = triage_cases.user_id ORDER BY triage_cases.created_at DESC`
+      );
     }
   }
 
   const queue = isSupport ? [] : (unitId
-    ? db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id WHERE queue_entries.unit_id = ? ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`).all(unitId)
-    : db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`).all());
+    ? await dbAll(
+    `SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id WHERE queue_entries.unit_id = ? ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`,
+    [unitId]
+  )
+    : await dbAll(
+    `SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`
+  ));
 
-  const integrations = db.prepare('SELECT * FROM integrations ORDER BY name').all();
-  const announcements = db.prepare('SELECT * FROM announcements ORDER BY published_at DESC LIMIT 8').all();
-  const units = db.prepare('SELECT * FROM units ORDER BY name ASC').all();
+  const integrations = await dbAll('SELECT * FROM integrations ORDER BY name');
+  const announcements = await dbAll('SELECT * FROM announcements ORDER BY published_at DESC LIMIT 8');
+  const units = await dbAll('SELECT * FROM units ORDER BY name ASC');
   
-  const auditLogs = db.prepare(`SELECT audit_logs.*, users.name AS actor_name FROM audit_logs LEFT JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 10`).all();
+  const auditLogs = await dbAll(
+    `SELECT audit_logs.*, users.name AS actor_name FROM audit_logs LEFT JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 10`
+  );
   
-  const records = isSupport ? [] : db.prepare(`SELECT records.*, users.name AS user_name, users.email AS user_email FROM records JOIN users ON users.id = records.user_id ORDER BY records.created_at DESC LIMIT 20`).all();
+  const records = isSupport ? [] : await dbAll(
+    `SELECT records.*, users.name AS user_name, users.email AS user_email FROM records JOIN users ON users.id = records.user_id ORDER BY records.created_at DESC LIMIT 20`
+  );
 
   res.json({ overview, appointments, users, tickets, triage, queue, integrations, announcements, auditLogs, records, units });
 });
 
-router.post('/admin/users', authRequired, adminRequired, (req, res, next) => {
+router.post('/admin/users', authRequired, adminRequired, async (req, res, next) => {
   try {
     const { name, email, password, cpf } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'Nome, email e senha sao obrigatorios.' });
     }
     
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existing = await dbGet('SELECT id FROM users WHERE email = ?', [email]);
     if (existing) {
       return res.status(400).json({ message: 'Este email ja esta em uso.' });
     }
@@ -667,10 +710,10 @@ router.post('/admin/users', authRequired, adminRequired, (req, res, next) => {
     const hash = bcrypt.hashSync(password, 12);
     const nowStr = now();
 
-    db.prepare(`
+    await dbRun(`
       INSERT INTO users (id, name, email, password_hash, role, provider, created_at, last_seen, cpf)
       VALUES (@id, @name, @email, @password_hash, 'user', 'local', @created_at, @last_seen, @cpf)
-    `).run({
+    `, {
       id,
       name,
       email,
@@ -687,29 +730,29 @@ router.post('/admin/users', authRequired, adminRequired, (req, res, next) => {
   }
 });
 
-router.patch('/admin/users/:id/role', authRequired, adminRequired, (req, res, next) => {
+router.patch('/admin/users/:id/role', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = roleSchema.parse(req.body);
     if (req.params.id === req.user.id && input.role !== 'admin') {
       return res.status(400).json({ message: 'Voce nao pode remover sua propria permissao de administrador.' });
     }
 
-    const result = db.prepare('UPDATE users SET role = ? WHERE id = ?').run(input.role, req.params.id);
+    const result = await dbRun('UPDATE users SET role = ? WHERE id = ?', [input.role, req.params.id]);
     if (result.changes === 0) return res.status(404).json({ message: 'Usuario nao encontrado.' });
 
     logAudit(req.user.id, 'updated_role', 'users', req.params.id);
-    return res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)) });
+    return res.json({ user: publicUser(await dbGet('SELECT * FROM users WHERE id = ?', [req.params.id])) });
   } catch (error) {
     return next(error);
   }
 });
 
-router.delete('/admin/users/:id', authRequired, adminRequired, (req, res, next) => {
+router.delete('/admin/users/:id', authRequired, adminRequired, async (req, res, next) => {
   try {
     if (req.params.id === req.user.id) {
       return res.status(400).json({ message: 'Voce nao pode excluir sua propria conta.' });
     }
-    const result = db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+    const result = await dbRun('DELETE FROM users WHERE id = ?', [req.params.id]);
     if (result.changes === 0) return res.status(404).json({ message: 'Usuario nao encontrado.' });
     
     logAudit(req.user.id, 'deleted_user', 'users', req.params.id);
@@ -719,7 +762,7 @@ router.delete('/admin/users/:id', authRequired, adminRequired, (req, res, next) 
   }
 });
 
-router.post('/admin/announcements', authRequired, adminRequired, (req, res, next) => {
+router.post('/admin/announcements', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = announcementSchema.parse(req.body);
     const announcement = {
@@ -730,10 +773,10 @@ router.post('/admin/announcements', authRequired, adminRequired, (req, res, next
       published_at: now(),
     };
 
-    db.prepare(`
+    await dbRun(`
       INSERT INTO announcements (id, title, body, audience, published_at)
       VALUES (@id, @title, @body, @audience, @published_at)
-    `).run(announcement);
+    `, [announcement]);
     logAudit(req.user.id, 'published', 'announcements', announcement.id);
     return res.status(201).json({ announcement });
   } catch (error) {
@@ -741,26 +784,29 @@ router.post('/admin/announcements', authRequired, adminRequired, (req, res, next
   }
 });
 
-router.patch('/admin/appointments/:id', authRequired, adminRequired, (req, res, next) => {
+router.patch('/admin/appointments/:id', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = statusSchema.parse(req.body);
     if (!['pending', 'confirmed', 'completed', 'cancelled'].includes(input.status)) {
       return res.status(400).json({ message: 'Status de agendamento invalido.' });
     }
 
-    const result = db.prepare('UPDATE appointments SET status = ? WHERE id = ?').run(input.status, req.params.id);
+    const result = await dbRun(
+      'UPDATE appointments SET status = ? WHERE id = ?',
+      [input.status, req.params.id]
+    );
     if (result.changes === 0) return res.status(404).json({ message: 'Agendamento nao encontrado.' });
 
     logAudit(req.user.id, 'updated_status', 'appointments', req.params.id);
-    return res.json({ appointment: appointmentById(req.params.id) });
+    return res.json({ appointment: await appointmentById(req.params.id) });
   } catch (error) {
     return next(error);
   }
 });
 
-router.delete('/admin/appointments/:id', authRequired, adminRequired, (req, res, next) => {
+router.delete('/admin/appointments/:id', authRequired, adminRequired, async (req, res, next) => {
   try {
-    const result = db.prepare('DELETE FROM appointments WHERE id = ?').run(req.params.id);
+    const result = await dbRun('DELETE FROM appointments WHERE id = ?', [req.params.id]);
     if (result.changes === 0) return res.status(404).json({ message: 'Agendamento nao encontrado.' });
     
     logAudit(req.user.id, 'deleted_appointment', 'appointments', req.params.id);
@@ -770,14 +816,17 @@ router.delete('/admin/appointments/:id', authRequired, adminRequired, (req, res,
   }
 });
 
-router.patch('/admin/tickets/:id', authRequired, adminRequired, (req, res, next) => {
+router.patch('/admin/tickets/:id', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = statusSchema.parse(req.body);
     if (!['open', 'in_review', 'resolved'].includes(input.status)) {
       return res.status(400).json({ message: 'Status de chamado invalido.' });
     }
 
-    const result = db.prepare('UPDATE support_tickets SET status = ? WHERE id = ?').run(input.status, req.params.id);
+    const result = await dbRun(
+      'UPDATE support_tickets SET status = ? WHERE id = ?',
+      [input.status, req.params.id]
+    );
     if (result.changes === 0) return res.status(404).json({ message: 'Chamado nao encontrado.' });
 
     logAudit(req.user.id, 'updated_status', 'support_tickets', req.params.id);
@@ -787,7 +836,7 @@ router.patch('/admin/tickets/:id', authRequired, adminRequired, (req, res, next)
   }
 });
 
-router.patch('/admin/integrations/:id', authRequired, adminRequired, (req, res, next) => {
+router.patch('/admin/integrations/:id', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = statusSchema.parse(req.body);
     if (!['online', 'degraded', 'offline'].includes(input.status)) {
@@ -795,26 +844,30 @@ router.patch('/admin/integrations/:id', authRequired, adminRequired, (req, res, 
     }
 
     const latency = Math.floor(90 + Math.random() * 720);
-    const result = db
-      .prepare('UPDATE integrations SET status = ?, last_sync = ?, latency_ms = ? WHERE id = ?')
-      .run(input.status, now(), latency, req.params.id);
+    const result = await dbRun(
+      'UPDATE integrations SET status = ?, last_sync = ?, latency_ms = ? WHERE id = ?',
+      [input.status, now(), latency, req.params.id]
+    );
     if (result.changes === 0) return res.status(404).json({ message: 'Integracao nao encontrada.' });
 
     logAudit(req.user.id, 'updated_status', 'integrations', req.params.id);
-    return res.json({ integration: db.prepare('SELECT * FROM integrations WHERE id = ?').get(req.params.id) });
+    return res.json({ integration: await dbGet('SELECT * FROM integrations WHERE id = ?', [req.params.id]) });
   } catch (error) {
     return next(error);
   }
 });
 
-router.patch('/admin/triage/:id', authRequired, adminRequired, (req, res, next) => {
+router.patch('/admin/triage/:id', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = statusSchema.parse(req.body);
     if (!['waiting', 'in_service', 'resolved'].includes(input.status)) {
       return res.status(400).json({ message: 'Status de triagem inválido.' });
     }
 
-    const result = db.prepare('UPDATE triage_cases SET status = ? WHERE id = ?').run(input.status, req.params.id);
+    const result = await dbRun(
+      'UPDATE triage_cases SET status = ? WHERE id = ?',
+      [input.status, req.params.id]
+    );
     if (result.changes === 0) return res.status(404).json({ message: 'Triagem não encontrada.' });
 
     logAudit(req.user.id, 'updated_status', 'triage_cases', req.params.id);
@@ -824,51 +877,48 @@ router.patch('/admin/triage/:id', authRequired, adminRequired, (req, res, next) 
   }
 });
 
-router.patch('/admin/queue/:id', authRequired, adminRequired, (req, res, next) => {
+router.patch('/admin/queue/:id', authRequired, adminRequired, async (req, res, next) => {
   try {
     const input = statusSchema.parse(req.body);
     if (!['waiting_triage', 'waiting_service', 'called', 'done', 'cancelled'].includes(input.status)) {
       return res.status(400).json({ message: 'Status de fila inválido.' });
     }
 
-    const result = db.prepare('UPDATE queue_entries SET status = ? WHERE id = ?').run(input.status, req.params.id);
+    const result = await dbRun(
+      'UPDATE queue_entries SET status = ? WHERE id = ?',
+      [input.status, req.params.id]
+    );
     if (result.changes === 0) return res.status(404).json({ message: 'Entrada de fila não encontrada.' });
 
     logAudit(req.user.id, 'updated_status', 'queue_entries', req.params.id);
-    return res.json({ queue: queueById(req.params.id) });
+    return res.json({ queue: await queueById(req.params.id) });
   } catch (error) {
     return next(error);
   }
 });
 
-function appointmentsForUser(userId) {
-  return db
-    .prepare(`
+async function appointmentsForUser(userId) {
+  return await dbAll(`
       SELECT appointments.*, units.name AS unit_name, units.district AS unit_district, units.phone AS unit_phone
       FROM appointments
       JOIN units ON units.id = appointments.unit_id
       WHERE appointments.user_id = ?
       ORDER BY scheduled_at ASC
-    `)
-    .all(userId);
+    `, [userId]);
 }
 
-function appointmentById(id) {
-  return db
-    .prepare(`
+async function appointmentById(id) {
+  return await dbGet(`
       SELECT appointments.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name
       FROM appointments
       JOIN users ON users.id = appointments.user_id
       JOIN units ON units.id = appointments.unit_id
       WHERE appointments.id = ?
-    `)
-    .get(id);
+    `, [id]);
 }
 
-function listUnits() {
-  return db
-    .prepare('SELECT * FROM units ORDER BY distance_km ASC, name ASC')
-    .all()
+async function listUnits() {
+  return (await dbAll('SELECT * FROM units ORDER BY distance_km ASC, name ASC'))
     .map(normalizeUnit);
 }
 
@@ -898,77 +948,75 @@ function isValidImageBuffer(buffer, mimeType) {
   return false;
 }
 
-function profileForUser(userId) {
-  return (
-    db.prepare('SELECT * FROM patient_profiles WHERE user_id = ?').get(userId) || {
-      user_id: userId,
-      cpf: '',
-      birth_date: '',
-      phone: '',
-      sus_card: '',
-      address: '',
-      emergency_contact: '',
-      updated_at: now(),
-    }
+async function profileForUser(userId) {
+  return ((await dbGet('SELECT * FROM patient_profiles WHERE user_id = ?', [userId])) || {
+    user_id: userId,
+    cpf: '',
+    birth_date: '',
+    phone: '',
+    sus_card: '',
+    address: '',
+    emergency_contact: '',
+    updated_at: now(),
+  });
+}
+
+async function triageForUser(userId) {
+  return await dbAll(
+    'SELECT * FROM triage_cases WHERE user_id = ? ORDER BY created_at DESC',
+    [userId]
   );
 }
 
-function triageForUser(userId) {
-  return db.prepare('SELECT * FROM triage_cases WHERE user_id = ? ORDER BY created_at DESC').all(userId);
-}
-
-function allTriageCases() {
-  return db
-    .prepare(`
+async function allTriageCases() {
+  return await dbAll(`
       SELECT triage_cases.*, users.name AS user_name, users.email AS user_email
       FROM triage_cases
       JOIN users ON users.id = triage_cases.user_id
       ORDER BY triage_cases.created_at DESC
-    `)
-    .all();
+    `);
 }
 
-function recordsForUser(userId) {
-  return db.prepare('SELECT * FROM records WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+async function recordsForUser(userId) {
+  return await dbAll(
+    'SELECT * FROM records WHERE user_id = ? ORDER BY created_at DESC',
+    [userId]
+  );
 }
 
-function allRecords() {
-  return db
-    .prepare(`
+async function allRecords() {
+  return await dbAll(`
       SELECT records.*, users.name AS user_name, users.email AS user_email
       FROM records
       JOIN users ON users.id = records.user_id
       ORDER BY records.created_at DESC
-    `)
-    .all();
+    `);
 }
 
-function allQueueEntries() {
-  return db.prepare(`SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name, units.address AS unit_address FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`).all();
+async function allQueueEntries() {
+  return await dbAll(
+    `SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name, units.address AS unit_address FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`
+  );
 }
 
-function queueForUser(userId) {
-  return db
-    .prepare(`
+async function queueForUser(userId) {
+  return await dbAll(`
       SELECT queue_entries.*, units.name AS unit_name, units.address AS unit_address
       FROM queue_entries
       JOIN units ON units.id = queue_entries.unit_id
       WHERE queue_entries.user_id = ?
       ORDER BY queue_entries.status IN ('waiting_triage', 'waiting_service') DESC, queue_entries.created_at DESC
-    `)
-    .all(userId);
+    `, [userId]);
 }
 
-function queueById(id) {
-  return db
-    .prepare(`
+async function queueById(id) {
+  return await dbGet(`
       SELECT queue_entries.*, users.name AS user_name, units.name AS unit_name, units.address AS unit_address
       FROM queue_entries
       JOIN users ON users.id = queue_entries.user_id
       JOIN units ON units.id = queue_entries.unit_id
       WHERE queue_entries.id = ?
-    `)
-    .get(id);
+    `, [id]);
 }
 
 function recommendationForRisk(riskLevel) {
@@ -980,8 +1028,8 @@ function recommendationForRisk(riskLevel) {
   }[riskLevel];
 }
 
-function count(table) {
-  return db.prepare(`SELECT COUNT(*) AS total FROM ${table}`).get().total;
+async function count(table) {
+  return (await dbGet(`SELECT COUNT(*) AS total FROM ${table}`)).total;
 }
 
 function initials(name) {

@@ -189,7 +189,7 @@ export type DashboardPayload = {
   tickets: Ticket[];
   units: Unit[];
   announcements: Announcement[];
-  users?: { id: string; name: string; email: string }[];
+  users?: { id: string; name: string; email: string; role?: string }[];
 };
 
 export type AdminPayload = {

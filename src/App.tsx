@@ -34,6 +34,7 @@ import {
   UsersRound,
   Wifi,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap } from 'react-leaflet';
@@ -49,7 +50,6 @@ import type {
   Integration,
   PatientProfile,
   QueueEntry,
-  QueueStatus,
   RecordItem,
   TriageCase,
   TicketStatus,
@@ -382,12 +382,6 @@ function HomePage({ data }: { data: DashboardPayload }) {
       <section className="metrics-grid">
         <MetricCard icon={<CalendarDays />} label="Próximas consultas" value={data.metrics.nextAppointments} tone="blue" />
         <MetricCard icon={<FileText />} label="Resultados disponíveis" value={data.metrics.availableResults} tone="green" />
-        {data.user.role === 'admin' && (
-          <>
-            <MetricCard icon={<Stethoscope />} label="Triagens ativas" value={data.metrics.activeTriage} tone="orange" />
-            <MetricCard icon={<ListChecks />} label="Posição na fila" value={data.metrics.queuePosition} tone="purple" />
-          </>
-        )}
       </section>
 
       <section className="content-grid">
@@ -729,6 +723,7 @@ function RecordsPage({
     }
   }
 
+  const patientUsers = users?.filter((user) => user.role === 'user') || [];
   const allItems = [...records, ...exams]
     .sort((a, b) => Date.parse('requested_at' in b ? b.requested_at : b.created_at) - Date.parse('requested_at' in a ? a.requested_at : a.created_at));
 
@@ -740,9 +735,9 @@ function RecordsPage({
       if ('requested_at' in item) return false;
       if (item.category !== activeTab) return false;
     }
-    // Patient filtering
-    if (isAdminView && filterUserId) {
-      if (item.user_id !== filterUserId) return false;
+    // The administrator always works with one patient record at a time.
+    if (isAdminView) {
+      if (!filterUserId || item.user_id !== filterUserId) return false;
     }
     return true;
   });
@@ -757,8 +752,8 @@ function RecordsPage({
             <label>
               Filtrar por Paciente:
               <select value={filterUserId} onChange={(e) => setFilterUserId(e.target.value)} style={{ marginLeft: '8px', padding: '4px', borderRadius: '4px', border: '1px solid var(--border)' }}>
-                <option value="">Todos os pacientes</option>
-                {users.map((u) => (
+              <option value="">Selecione um paciente</option>
+              {patientUsers.map((u) => (
                   <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                 ))}
               </select>
@@ -766,21 +761,24 @@ function RecordsPage({
           </div>
         )}
 
-        <div className="tabs" style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        <div className="record-tabs" role="tablist" aria-label="Categorias do prontuário">
           {['Geral', 'Exames', 'Medicação', 'Procedimento Cirúrgico'].map(tab => (
             <button
               key={tab}
               type="button"
-              className={`chip ${activeTab === tab ? 'active' : ''}`}
+              className={`record-tab ${activeTab === tab ? 'active' : ''}`}
               onClick={() => setActiveTab(tab)}
-              style={{ background: activeTab === tab ? 'var(--primary)' : 'var(--surface-sunken)', color: activeTab === tab ? 'white' : 'var(--text)', whiteSpace: 'nowrap', border: 'none', cursor: 'pointer', padding: '8px 12px' }}
+              role="tab"
+              aria-selected={activeTab === tab}
             >
               {tab}
             </button>
           ))}
         </div>
 
-        {filteredItems.map((item) => (
+        {isAdminView && !filterUserId ? (
+          <div className="admin-empty">Selecione um paciente para visualizar o prontuário.</div>
+        ) : filteredItems.map((item) => (
             <div className="timeline-item" key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <span className="timeline-dot" />
               <div style={{ flex: 1 }}>
@@ -799,14 +797,14 @@ function RecordsPage({
                   className="danger-action" 
                   title="Excluir"
                   onClick={() => void deleteRecord(item.id)}
-                  style={{ marginLeft: 16, height: 32, padding: '0 12px', fontSize: '0.85rem' }}
                 >
                   <Trash2 size={14} /> Excluir
                 </button>
               )}
             </div>
           ))}
-          {!filteredItems.length && <div className="admin-empty">Nenhum registro encontrado.</div>}
+          {!isAdminView && !filteredItems.length && <div className="admin-empty">Nenhum registro encontrado.</div>}
+          {isAdminView && Boolean(filterUserId) && !filteredItems.length && <div className="admin-empty">Nenhum registro encontrado para este paciente.</div>}
       </div>
       
       {isAdminView && (
@@ -817,7 +815,7 @@ function RecordsPage({
             Paciente
             <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
               <option value="">Selecione um paciente...</option>
-              {users.map((u) => (
+              {patientUsers.map((u) => (
                 <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
               ))}
             </select>
@@ -872,9 +870,10 @@ function TriagePage({
     spo2: '',
     glucose: '',
     chiefComplaint: '',
-    manchesterColor: 'Verde' as const
+    manchesterColor: 'Verde' as NonNullable<QueueEntry['triage_color']>,
   });
   const [message, setMessage] = useState('');
+  const selectedQueueEntry = queue?.find((item) => item.id === triageQueueId);
 
   async function submitTriage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -885,11 +884,11 @@ function TriagePage({
         method: 'POST', 
         body: { queueId: triageQueueId, ...triageData } 
       });
-      setMessage('Triagem (Protocolo de Manchester) registrada com sucesso!');
+      setMessage('Triagem registrada. O paciente foi encaminhado para atendimento.');
       setTriageQueueId(null);
       setTriageData({
         temperature: '', sysBp: '', diaBp: '', heartRate: '', respRate: '',
-        spo2: '', glucose: '', chiefComplaint: '', manchesterColor: 'Verde'
+        spo2: '', glucose: '', chiefComplaint: '', manchesterColor: 'Verde',
       });
       await onCreated();
     } catch (error) {
@@ -911,13 +910,14 @@ function TriagePage({
               </span>
               <div>
                 <div className="card-title-line">
-                  <strong>#{item.position} - {item.user_name}</strong>
-                  <StatusBadge status="Aguardando Triagem" />
+                  <strong>{item.user_name}</strong>
+                  <QueueStatusBadge item={item} />
                 </div>
                 <p>{item.service} - {item.unit_name}</p>
-                {item.chief_complaint && <p style={{fontSize: '0.85em'}}>Queixa: {item.chief_complaint}</p>}
+                {item.chief_complaint && <small>Queixa principal: {item.chief_complaint}</small>}
                 {isAdminView && (
-                  <button className="secondary-action" style={{ marginTop: '8px' }} onClick={() => setTriageQueueId(item.id)}>
+                  <button className="triage-action" type="button" onClick={() => setTriageQueueId(item.id)}>
+                    <Stethoscope size={18} />
                     Realizar Triagem
                   </button>
                 )}
@@ -929,61 +929,71 @@ function TriagePage({
       </div>
 
       {triageQueueId && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <form className="action-panel" onSubmit={submitTriage} style={{ background: 'var(--surface)', padding: '24px', borderRadius: '8px', maxWidth: '600px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div className="modal-backdrop" role="presentation">
+          <form className="triage-modal" onSubmit={submitTriage} role="dialog" aria-modal="true" aria-labelledby="triage-modal-title">
             <SectionHeader icon={<Activity />} title="Realizar Triagem (Protocolo de Manchester)" />
-            
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            {selectedQueueEntry && (
+              <div className="triage-patient-summary">
+                <strong>{selectedQueueEntry.user_name}</strong>
+                <span>{selectedQueueEntry.unit_name} - {selectedQueueEntry.service}</span>
+              </div>
+            )}
+
+            <div className="triage-fields">
               <label>
-                Temp. (°C)
-                <input required value={triageData.temperature} onChange={(e) => setTriageData({...triageData, temperature: e.target.value})} placeholder="36.5" />
+                Temperatura (°C)
+                <input type="number" step="0.1" min="20" max="45" required value={triageData.temperature} onChange={(e) => setTriageData({...triageData, temperature: e.target.value})} placeholder="36,5" />
               </label>
               <label>
-                Freq. Cardíaca (bpm)
-                <input required value={triageData.heartRate} onChange={(e) => setTriageData({...triageData, heartRate: e.target.value})} placeholder="80" />
+                Frequência cardíaca (bpm)
+                <input type="number" min="0" required value={triageData.heartRate} onChange={(e) => setTriageData({...triageData, heartRate: e.target.value})} placeholder="80" />
               </label>
               <label>
-                PA Sistólica (mmHg)
-                <input required value={triageData.sysBp} onChange={(e) => setTriageData({...triageData, sysBp: e.target.value})} placeholder="120" />
+                Pressão arterial sistólica (mmHg)
+                <input type="number" min="0" required value={triageData.sysBp} onChange={(e) => setTriageData({...triageData, sysBp: e.target.value})} placeholder="120" />
               </label>
               <label>
-                PA Diastólica (mmHg)
-                <input required value={triageData.diaBp} onChange={(e) => setTriageData({...triageData, diaBp: e.target.value})} placeholder="80" />
+                Pressão arterial diastólica (mmHg)
+                <input type="number" min="0" required value={triageData.diaBp} onChange={(e) => setTriageData({...triageData, diaBp: e.target.value})} placeholder="80" />
               </label>
               <label>
-                Freq. Respiratória (irpm)
-                <input required value={triageData.respRate} onChange={(e) => setTriageData({...triageData, respRate: e.target.value})} placeholder="16" />
+                Frequência respiratória (irpm)
+                <input type="number" min="0" required value={triageData.respRate} onChange={(e) => setTriageData({...triageData, respRate: e.target.value})} placeholder="16" />
               </label>
               <label>
-                SpO2 (%)
-                <input required value={triageData.spo2} onChange={(e) => setTriageData({...triageData, spo2: e.target.value})} placeholder="98" />
+                Saturação de oxigênio (%)
+                <input type="number" min="0" max="100" required value={triageData.spo2} onChange={(e) => setTriageData({...triageData, spo2: e.target.value})} placeholder="98" />
               </label>
               <label>
                 Glicemia (mg/dL)
-                <input required value={triageData.glucose} onChange={(e) => setTriageData({...triageData, glucose: e.target.value})} placeholder="90" />
+                <input type="number" min="0" required value={triageData.glucose} onChange={(e) => setTriageData({...triageData, glucose: e.target.value})} placeholder="90" />
               </label>
               <label>
-                Classificação (Cor)
-                <select required value={triageData.manchesterColor} onChange={(e) => setTriageData({...triageData, manchesterColor: e.target.value as any})}>
-                  <option value="Azul">Azul (Não Urgente - 240m)</option>
-                  <option value="Verde">Verde (Pouco Urgente - 120m)</option>
-                  <option value="Amarelo">Amarelo (Urgente - 50m)</option>
-                  <option value="Laranja">Laranja (Muito Urgente - 10m)</option>
-                  <option value="Vermelho">Vermelho (Emergência - 0m)</option>
+                Classificação de Manchester
+                <select required value={triageData.manchesterColor} onChange={(e) => setTriageData({...triageData, manchesterColor: e.target.value as NonNullable<QueueEntry['triage_color']>})}>
+                  <option value="Azul">Azul - até 240 minutos</option>
+                  <option value="Verde">Verde - até 120 minutos</option>
+                  <option value="Amarelo">Amarelo - até 50 minutos</option>
+                  <option value="Laranja">Laranja - até 10 minutos</option>
+                  <option value="Vermelho">Vermelho - atendimento imediato</option>
                 </select>
               </label>
             </div>
 
-            <label style={{ marginTop: '16px', display: 'block' }}>
-              Queixa Principal / Avaliação
+            <label className="triage-complaint">
+              Queixa principal / avaliação
               <textarea required value={triageData.chiefComplaint} onChange={(e) => setTriageData({...triageData, chiefComplaint: e.target.value})} rows={3}></textarea>
             </label>
+            <div className="triage-timestamp">
+              <strong>Horário da triagem</strong>
+              <span>Registrado automaticamente ao salvar.</span>
+            </div>
 
             {message && <div className="form-message">{message}</div>}
 
-            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-              <button type="submit" className="primary-action" style={{ flex: 1 }}>Salvar Triagem</button>
-              <button type="button" className="secondary-action" style={{ flex: 1 }} onClick={() => setTriageQueueId(null)}>Cancelar</button>
+            <div className="modal-actions">
+              <button type="submit" className="primary-action"><Save size={18} />Salvar triagem</button>
+              <button type="button" className="outline-action" onClick={() => setTriageQueueId(null)}><X size={18} />Cancelar</button>
             </div>
           </form>
         </div>
@@ -994,7 +1004,7 @@ function TriagePage({
 
 function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promise<void>; queue: QueueEntry[]; users?: DashboardPayload['users']; units?: any[] }) {
   const [service, setService] = useState('Clínica geral');
-  const [chiefComplaint, setChiefComplaint] = useState('Checkup de rotina');
+  const [chiefComplaint, setChiefComplaint] = useState('');
   const [message, setMessage] = useState('');
   const [userId, setUserId] = useState('');
   const [selectedUnitId, setSelectedUnitId] = useState(() => sessionStorage.getItem('saudeconnect.unitFilter') || '');
@@ -1003,18 +1013,14 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
     event.preventDefault();
     setMessage('');
     
-    let targetUnitId = selectedUnitId;
-    if (!users) {
-      targetUnitId = sessionStorage.getItem('saudeconnect.unitFilter') || '';
-    }
-
-    if (!targetUnitId) {
+    if (!selectedUnitId) {
       setMessage('Nenhuma unidade selecionada.');
       return;
     }
     try {
-      await api('/queue', { method: 'POST', body: { unitId: targetUnitId, service, chiefComplaint, userId } });
-      setMessage('Entrada adicionada à fila digital.');
+      await api('/queue', { method: 'POST', body: { unitId: selectedUnitId, service, chiefComplaint, userId } });
+      setChiefComplaint('');
+      setMessage('Paciente enviado para a fila de triagem.');
       await onCreated();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Falha ao entrar na fila.');
@@ -1024,30 +1030,26 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
   return (
     <section className="content-grid">
       <div className="stack">
-        <SectionHeader icon={<ListChecks />} title="Fila digital" />
+        <SectionHeader icon={<ListChecks />} title="Fila de atendimento" />
         <div className="queue-board">
           {queue.map((item) => (
-            <article className="queue-card" key={item.id} style={{ borderLeft: item.triage_color ? `4px solid ${
-              item.triage_color === 'Vermelho' ? 'var(--danger)' : 
-              item.triage_color === 'Laranja' ? '#ff6600' : 
-              item.triage_color === 'Amarelo' ? 'var(--warning)' : 
-              item.triage_color === 'Verde' ? 'var(--success)' : 
-              'var(--primary)'}` : '4px solid transparent' }}>
+            <article className={`queue-card ${queuePriorityClass(item.triage_color)}`} key={item.id}>
               <div>
-                <strong>#{item.position} - {item.user_name}</strong>
+                <strong>{item.user_name}</strong>
                 <span>{item.service}</span>
               </div>
               <p>{item.unit_name}</p>
-              {item.chief_complaint && <p style={{fontSize: '0.85em', margin: '4px 0'}}>Queixa: {item.chief_complaint}</p>}
-              <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min estimados`}</small>
-              <StatusBadge status={item.status === 'waiting_service' && item.triage_color ? `Triagem realizada - ${item.triage_color}` : item.status} />
+              {item.chief_complaint && <small>Queixa principal: {item.chief_complaint}</small>}
+              <QueueDeadline item={item} />
+              <QueueStatusBadge item={item} />
             </article>
           ))}
+          {!queue.length && <div className="admin-empty">Nenhum atendimento na fila desta unidade.</div>}
         </div>
       </div>
       {users && (
         <form className="action-panel" onSubmit={submit}>
-          <SectionHeader icon={<Plus />} title="Adicionar paciente na fila" />
+          <SectionHeader icon={<Plus />} title="Enviar paciente à fila" />
           
           {units && units.length > 0 && (
             <label>
@@ -1065,7 +1067,8 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
             Paciente
             <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
               <option value="">Selecione um paciente...</option>
-              {users.map((u) => (
+              <option value="">Selecione um paciente</option>
+              {users.filter((u) => u.role === 'user').map((u) => (
                 <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
               ))}
             </select>
@@ -1075,13 +1078,13 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
             <input value={service} onChange={(event) => setService(event.target.value)} required />
           </label>
           <label>
-            Motivo da Consulta
-            <input value={chiefComplaint} onChange={(event) => setChiefComplaint(event.target.value)} required />
+            Queixa principal
+            <textarea value={chiefComplaint} onChange={(event) => setChiefComplaint(event.target.value)} required />
           </label>
           {message && <div className="form-message">{message}</div>}
           <button className="primary-action" type="submit">
             <Plus size={18} />
-            Entrar na fila
+            Enviar à fila
           </button>
         </form>
       )}
@@ -1145,12 +1148,6 @@ function AdminDashboard() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao excluir agendamento.');
     }
-  }
-
-
-
-  async function updateQueue(id: string, status: QueueStatus) {
-    await mutate(`/admin/queue/${id}`, { status }, 'Fila atualizada.');
   }
 
 
@@ -1367,24 +1364,14 @@ function AdminDashboard() {
       <section className="admin-grid">
         <AdminTable title="Fila" icon={<ListChecks />}>
           {visibleQueue.map((item) => (
-            <div className="admin-row" key={item.id} style={{ borderLeft: item.triage_color ? `4px solid ${
-              item.triage_color === 'Vermelho' ? 'var(--danger)' : 
-              item.triage_color === 'Laranja' ? '#ff6600' : 
-              item.triage_color === 'Amarelo' ? 'var(--warning)' : 
-              item.triage_color === 'Verde' ? 'var(--success)' : 
-              'var(--primary)'}` : '4px solid transparent' }}>
+            <div className={`admin-row queue-row ${queuePriorityClass(item.triage_color)}`} key={item.id}>
               <div>
-                <strong>#{item.position} - {item.user_name}</strong>
+                <strong>{item.user_name}</strong>
                 <span>{item.service} - {item.unit_name}</span>
-                {item.chief_complaint && <span style={{display: 'block', fontSize: '0.85em', color: 'var(--text-muted)'}}>Queixa: {item.chief_complaint}</span>}
+                {item.chief_complaint && <span className="queue-complaint">Queixa principal: {item.chief_complaint}</span>}
               </div>
-              <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min`}</small>
-              <select value={item.status} onChange={(event) => void updateQueue(item.id, event.target.value as QueueStatus)}>
-                <option value="waiting_triage">Aguardando Triagem</option>
-                <option value="waiting_service">Triagem realizada</option>
-                <option value="done">Finalizado</option>
-                <option value="cancelled">Cancelado</option>
-              </select>
+              <QueueDeadline item={item} />
+              <QueueStatusBadge item={item} />
             </div>
           ))}
           {!visibleQueue.length && <div className="admin-empty">Nenhuma entrada de fila encontrada.</div>}
@@ -1731,8 +1718,9 @@ function BrandLockup({ small = false }: { small?: boolean }) {
   );
 }
 
-function AdminQueueForm({ units, users, onCreated }: { units: any[]; users: { id: string; name: string; email: string }[]; onCreated: () => Promise<void> }) {
-  const [userId, setUserId] = useState(users[0]?.id || '');
+function AdminQueueForm({ units, users, onCreated }: { units: Unit[]; users: DashboardPayload['users']; onCreated: () => Promise<void> }) {
+  const patients = (users || []).filter((user) => user.role === 'user');
+  const [userId, setUserId] = useState('');
   const [unitId, setUnitId] = useState(units[0]?.id || '');
   const [service, setService] = useState('Clínica geral');
   const [chiefComplaint, setChiefComplaint] = useState('');
@@ -1743,7 +1731,8 @@ function AdminQueueForm({ units, users, onCreated }: { units: any[]; users: { id
     setMessage('');
     try {
       await api('/queue', { method: 'POST', body: { userId, unitId, service, chiefComplaint } });
-      setMessage('Paciente adicionado à fila com sucesso.');
+      setChiefComplaint('');
+      setMessage('Paciente enviado para a fila de triagem.');
       await onCreated();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Falha ao adicionar à fila.');
@@ -1751,19 +1740,20 @@ function AdminQueueForm({ units, users, onCreated }: { units: any[]; users: { id
   }
 
   return (
-    <form className="admin-form" onSubmit={submit}>
-      <h4>Adicionar Paciente à Fila</h4>
+    <form className="action-panel" onSubmit={submit}>
+      <SectionHeader icon={<ListChecks />} title="Enviar paciente à fila" />
       <div className="form-group">
         <label>Paciente</label>
-        <select value={userId} onChange={(e) => setUserId(e.target.value)}>
-          {users.map((u) => (
+        <select value={userId} onChange={(e) => setUserId(e.target.value)} required>
+          <option value="">Selecione um paciente</option>
+          {patients.map((u) => (
             <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
           ))}
         </select>
       </div>
       <div className="form-group">
         <label>Unidade</label>
-        <select value={unitId} onChange={(e) => setUnitId(e.target.value)}>
+        <select value={unitId} onChange={(e) => setUnitId(e.target.value)} required>
           {units.map((u) => (
             <option key={u.id} value={u.id}>{u.name}</option>
           ))}
@@ -1779,10 +1769,10 @@ function AdminQueueForm({ units, users, onCreated }: { units: any[]; users: { id
         </select>
       </div>
       <div className="form-group">
-        <label>Queixa Principal</label>
-        <input type="text" value={chiefComplaint} onChange={(e) => setChiefComplaint(e.target.value)} required />
+        <label>Queixa principal</label>
+        <textarea value={chiefComplaint} onChange={(e) => setChiefComplaint(e.target.value)} required />
       </div>
-      <button type="submit" className="primary-action">Adicionar à Fila</button>
+      <button type="submit" className="primary-action"><ListChecks size={18} />Enviar à fila</button>
       {message && <p className="form-message">{message}</p>}
     </form>
   );
@@ -1936,6 +1926,32 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`status-badge status-${statusClass(status)}`}>{labels[status] || status}</span>;
 }
 
+function QueueStatusBadge({ item }: { item: QueueEntry }) {
+  const isTriaged = item.status === 'waiting_service' && item.triage_color;
+  const label = isTriaged
+    ? `Aguardando atendimento - classificação ${item.triage_color}`
+    : item.status === 'waiting_triage'
+      ? 'Aguardando triagem'
+      : item.status === 'done'
+        ? 'Atendimento finalizado'
+        : item.status === 'cancelled'
+          ? 'Atendimento cancelado'
+          : item.status;
+  return <span className={`queue-status ${queuePriorityClass(item.triage_color)}`}>{label}</span>;
+}
+
+function QueueDeadline({ item }: { item: QueueEntry }) {
+  if (item.status === 'waiting_triage') return <small className="queue-deadline">Aguardando classificação de risco</small>;
+  if (item.triage_color === 'Vermelho') return <small className="queue-deadline emergency">Atendimento imediato</small>;
+  if (!item.deadline_time) return null;
+  return <small className="queue-deadline">Limite para atendimento: {formatTime(item.deadline_time)}</small>;
+}
+
+function queuePriorityClass(color?: QueueEntry['triage_color']) {
+  if (!color) return 'priority-unclassified';
+  return `priority-${color.toLocaleLowerCase('pt-BR')}`;
+}
+
 function statusClass(status: string) {
   if (['confirmed', 'resolved', 'online', 'completed', 'done', 'called', 'Aberto'].includes(status)) return 'ok';
   if (['pending', 'waiting', 'degraded', 'Coleta até 16h', 'Plantão reduzido'].includes(status)) return 'warn';
@@ -2030,6 +2046,13 @@ function formatDate(value: string, includeTime = true) {
     month: 'short',
     year: 'numeric',
     ...(includeTime ? { hour: '2-digit', minute: '2-digit' } : {}),
+  }).format(new Date(value));
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
   }).format(new Date(value));
 }
 

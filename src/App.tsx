@@ -1417,18 +1417,21 @@ function AdminDashboard() {
                   <small className={`presence-label status-${presence.status}`}>{presence.label}</small>
                 </div>
                 <small>{item.last_seen || item.lastSeen ? `Último acesso ${formatRelativeTime(String(item.last_seen || item.lastSeen))}` : (item.last_login || item.lastLogin ? `Último acesso ${formatRelativeTime(String(item.last_login || item.lastLogin))}` : 'Sem acesso recente')}</small>
-                <select value={item.role} onChange={(event) => {
-                  if (event.target.value === 'delete') {
-                    void deleteUser(item.id);
-                  } else {
-                    void updateUserRole(item.id, event.target.value as User['role']);
-                  }
-                }}>
-                  <option value="user">Usuário</option>
-                  <option value="admin">Administrador</option>
-                  <option value="support">Suporte Técnico</option>
-                  <option value="delete">Excluir usuário</option>
-                </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <select value={item.role} onChange={(event) => void updateUserRole(item.id, event.target.value as User['role'])}>
+                    <option value="user">Usuário</option>
+                    <option value="admin">Administrador</option>
+                    <option value="support">Suporte Técnico</option>
+                  </select>
+                  <button 
+                    className="danger-action" 
+                    title="Excluir"
+                    onClick={() => void deleteUser(item.id)}
+                    style={{ height: 32, padding: '0 12px', fontSize: '0.85rem' }}
+                  >
+                    <Trash2 size={14} /> Excluir
+                  </button>
+                </div>
               </div>
             );
           })}

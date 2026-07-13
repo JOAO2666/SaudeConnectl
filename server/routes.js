@@ -704,6 +704,21 @@ router.patch('/admin/users/:id/role', authRequired, adminRequired, (req, res, ne
   }
 });
 
+router.delete('/admin/users/:id', authRequired, adminRequired, (req, res, next) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ message: 'Voce nao pode excluir sua propria conta.' });
+    }
+    const result = db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+    if (result.changes === 0) return res.status(404).json({ message: 'Usuario nao encontrado.' });
+    
+    logAudit(req.user.id, 'deleted_user', 'users', req.params.id);
+    return res.json({ success: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post('/admin/announcements', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = announcementSchema.parse(req.body);

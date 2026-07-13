@@ -1118,6 +1118,17 @@ function AdminDashboard() {
     await mutate(`/admin/users/${id}/role`, { role }, 'Permissão atualizada.');
   }
 
+  async function deleteUser(id: string) {
+    if (!confirm('Tem certeza que deseja excluir permanentemente este usuário?')) return;
+    try {
+      await api(`/admin/users/${id}`, { method: 'DELETE' });
+      setNotice('Usuário excluído com sucesso.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao excluir usuário.');
+    }
+  }
+
   async function publishAnnouncement(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
@@ -1360,10 +1371,17 @@ function AdminDashboard() {
                   <small className={`presence-label status-${presence.status}`}>{presence.label}</small>
                 </div>
                 <small>{item.last_seen || item.lastSeen ? `Último acesso ${formatRelativeTime(String(item.last_seen || item.lastSeen))}` : (item.last_login || item.lastLogin ? `Último acesso ${formatRelativeTime(String(item.last_login || item.lastLogin))}` : 'Sem acesso recente')}</small>
-                <select value={item.role} onChange={(event) => void updateUserRole(item.id, event.target.value as User['role'])}>
+                <select value={item.role} onChange={(event) => {
+                  if (event.target.value === 'delete') {
+                    void deleteUser(item.id);
+                  } else {
+                    void updateUserRole(item.id, event.target.value as User['role']);
+                  }
+                }}>
                   <option value="user">Usuário</option>
                   <option value="admin">Administrador</option>
                   <option value="support">Suporte Técnico</option>
+                  <option value="delete">Excluir usuário</option>
                 </select>
               </div>
             );

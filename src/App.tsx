@@ -1009,6 +1009,16 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
   const [userId, setUserId] = useState('');
   const [selectedUnitId, setSelectedUnitId] = useState(() => sessionStorage.getItem('saudeconnect.unitFilter') || '');
 
+  async function deleteQueueEntry(id: string) {
+    if (!confirm('Tem certeza que deseja excluir esta entrada da fila?')) return;
+    try {
+      await api(`/admin/queue/${id}`, { method: 'DELETE' });
+      await onCreated();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao excluir da fila.');
+    }
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage('');
@@ -1042,6 +1052,13 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
               {item.chief_complaint && <small>Queixa principal: {item.chief_complaint}</small>}
               <QueueDeadline item={item} />
               <QueueStatusBadge item={item} />
+              {users && (
+                <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="danger-action" onClick={() => void deleteQueueEntry(item.id)} style={{ padding: '0 8px', height: '28px', fontSize: '0.85rem' }} title="Excluir da fila">
+                    <Trash2 size={14} /> Excluir
+                  </button>
+                </div>
+              )}
             </article>
           ))}
           {!queue.length && <div className="admin-empty">Nenhum atendimento na fila desta unidade.</div>}
@@ -1161,6 +1178,17 @@ function AdminDashboard() {
 
   async function updateUserRole(id: string, role: User['role']) {
     await mutate(`/admin/users/${id}/role`, { role }, 'Permissão atualizada.');
+  }
+
+  async function deleteQueueEntry(id: string) {
+    if (!confirm('Tem certeza que deseja excluir esta entrada da fila?')) return;
+    try {
+      await api(`/admin/queue/${id}`, { method: 'DELETE' });
+      setNotice('Entrada excluída da fila.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao excluir da fila.');
+    }
   }
 
   async function deleteUser(id: string) {
@@ -1372,6 +1400,14 @@ function AdminDashboard() {
               </div>
               <QueueDeadline item={item} />
               <QueueStatusBadge item={item} />
+              <button 
+                className="danger-action" 
+                title="Excluir da fila"
+                onClick={() => void deleteQueueEntry(item.id)}
+                style={{ height: 32, padding: '0 12px', fontSize: '0.85rem' }}
+              >
+                <Trash2 size={14} /> Excluir
+              </button>
             </div>
           ))}
           {!visibleQueue.length && <div className="admin-empty">Nenhuma entrada de fila encontrada.</div>}
@@ -1491,7 +1527,7 @@ function AdminDashboard() {
         </AdminTable>
 
         <AdminTable title="Atividade recente" icon={<ShieldCheck />} compact>
-          {data.auditLogs.map((item) => (
+          {data.auditLogs.slice(0, 5).map((item) => (
             <div className="admin-row" key={item.id}>
               <div>
                 <strong>{item.actor_name || 'Sistema'}</strong>

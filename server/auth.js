@@ -90,7 +90,7 @@ export async function authRequired(req, res, next) {
       return res.status(401).json({ message: 'Usuario nao encontrado.' });
     }
 
-    await dbRun('UPDATE users SET last_seen = ? WHERE id = ?', [new Date().toISOString(), user.id]);
+    // await dbRun('UPDATE users SET last_seen = ? WHERE id = ?', [new Date().toISOString(), user.id]);
     user.last_seen = new Date().toISOString();
 
     req.user = user;

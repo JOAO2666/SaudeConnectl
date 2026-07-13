@@ -257,8 +257,8 @@ function seedDb() {
       status: 'Aberto',
       distance_km: 1.0,
       hours: '24 horas',
-      lat: -9.3888,
-      lng: -40.5057,
+      lat: -9.3896381,
+      lng: -40.5216397,
       services: ['Emergencia', 'Triagem', 'Enfermagem'],
     },
     {
@@ -272,8 +272,8 @@ function seedDb() {
       status: 'Aberto',
       distance_km: 2.1,
       hours: '24 horas',
-      lat: -9.394730090681888,
-      lng: -40.50217682497653,
+      lat: -9.3945738,
+      lng: -40.4997125,
       services: ['Pediatria', 'Maternidade', 'Urgencia'],
     },
     {
@@ -302,8 +302,8 @@ function seedDb() {
       status: 'Aberto',
       distance_km: 1.5,
       hours: '24 horas',
-      lat: -9.39241419068415,
-      lng: -40.499105024976735,
+      lat: -9.3924175,
+      lng: -40.4966576,
       services: ['Traumatologia', 'Urgencia', 'Cirurgia'],
     },
     {
@@ -317,8 +317,8 @@ function seedDb() {
       status: 'Aberto',
       distance_km: 5.2,
       hours: '24 horas',
-      lat: -9.414211490663284,
-      lng: -40.513266524976494,
+      lat: -9.4141581,
+      lng: -40.5109149,
       services: ['Clinica Medica', 'Cirurgia Geral'],
     }
   ].forEach(upsertUnit);

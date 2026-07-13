@@ -995,7 +995,7 @@ async function allRecords() {
 
 async function allQueueEntries() {
   return await dbAll(
-    `SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name, units.address AS unit_address FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`
+    `SELECT queue_entries.*, users.name AS user_name, users.email AS user_email, units.name AS unit_name, units.address AS unit_address FROM queue_entries JOIN users ON users.id = queue_entries.user_id JOIN units ON units.id = queue_entries.unit_id WHERE queue_entries.status != 'done' ORDER BY CASE queue_entries.status WHEN 'waiting_service' THEN 1 WHEN 'waiting_triage' THEN 2 ELSE 3 END ASC, CASE queue_entries.triage_color WHEN 'Vermelho' THEN 1 WHEN 'Laranja' THEN 2 WHEN 'Amarelo' THEN 3 WHEN 'Verde' THEN 4 WHEN 'Azul' THEN 5 ELSE 6 END ASC, queue_entries.deadline_time ASC, queue_entries.created_at ASC`
   );
 }
 
@@ -1004,7 +1004,7 @@ async function queueForUser(userId) {
       SELECT queue_entries.*, units.name AS unit_name, units.address AS unit_address
       FROM queue_entries
       JOIN units ON units.id = queue_entries.unit_id
-      WHERE queue_entries.user_id = ?
+      WHERE queue_entries.user_id = ? AND queue_entries.status != 'done'
       ORDER BY queue_entries.status IN ('waiting_triage', 'waiting_service') DESC, queue_entries.created_at DESC
     `, [userId]);
 }

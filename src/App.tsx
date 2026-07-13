@@ -34,6 +34,7 @@ import {
   UsersRound,
   Wifi,
   Trash2,
+  CheckCircle,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -896,7 +897,8 @@ function TriagePage({
     }
   }
 
-  const queueWaitingTriage = queue?.filter(q => q.status === 'waiting_triage') || [];
+  const unitFilter = sessionStorage.getItem('saudeconnect.unitFilter') || '';
+  const queueWaitingTriage = queue?.filter(q => q.status === 'waiting_triage' && (!unitFilter || q.unit_id === unitFilter)) || [];
 
   return (
     <section className="content-grid">
@@ -1009,13 +1011,16 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
   const [userId, setUserId] = useState('');
   const [selectedUnitId, setSelectedUnitId] = useState(() => sessionStorage.getItem('saudeconnect.unitFilter') || '');
 
-  async function deleteQueueEntry(id: string) {
-    if (!confirm('Tem certeza que deseja excluir esta entrada da fila?')) return;
+  const unitFilter = sessionStorage.getItem('saudeconnect.unitFilter') || '';
+  const filteredQueue = queue?.filter(q => !unitFilter || q.unit_id === unitFilter) || [];
+
+  async function completeQueueEntry(id: string) {
+    if (!confirm('Tem certeza que deseja concluir este atendimento?')) return;
     try {
-      await api(`/admin/queue/${id}`, { method: 'DELETE' });
+      await api(`/admin/queue/${id}`, { method: 'PATCH', body: { status: 'done' } });
       await onCreated();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erro ao excluir da fila.');
+      alert(err instanceof Error ? err.message : 'Erro ao concluir atendimento.');
     }
   }
 
@@ -1042,7 +1047,7 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
       <div className="stack">
         <SectionHeader icon={<ListChecks />} title="Fila de atendimento" />
         <div className="queue-board">
-          {queue.map((item) => (
+          {filteredQueue.map((item) => (
             <article className={`queue-card ${queuePriorityClass(item.triage_color)}`} key={item.id}>
               <div>
                 <strong>{item.user_name}</strong>
@@ -1053,15 +1058,15 @@ function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promis
               <QueueDeadline item={item} />
               <QueueStatusBadge item={item} />
               {users && (
-                <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end' }}>
-                  <button className="danger-action" onClick={() => void deleteQueueEntry(item.id)} style={{ padding: '0 8px', height: '28px', fontSize: '0.85rem' }} title="Excluir da fila">
-                    <Trash2 size={14} /> Excluir
+                <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button className="danger-action" onClick={() => void completeQueueEntry(item.id)} style={{ padding: '0 8px', height: '28px', fontSize: '0.85rem', background: 'var(--primary)', color: 'white', borderColor: 'var(--primary)' }} title="Concluir atendimento">
+                    <CheckCircle size={14} /> Concluir
                   </button>
                 </div>
               )}
             </article>
           ))}
-          {!queue.length && <div className="admin-empty">Nenhum atendimento na fila desta unidade.</div>}
+          {!filteredQueue.length && <div className="admin-empty">Nenhum atendimento na fila desta unidade.</div>}
         </div>
       </div>
       {users && (
@@ -1180,14 +1185,14 @@ function AdminDashboard() {
     await mutate(`/admin/users/${id}/role`, { role }, 'Permissão atualizada.');
   }
 
-  async function deleteQueueEntry(id: string) {
-    if (!confirm('Tem certeza que deseja excluir esta entrada da fila?')) return;
+  async function completeQueueEntry(id: string) {
+    if (!confirm('Tem certeza que deseja concluir este atendimento?')) return;
     try {
-      await api(`/admin/queue/${id}`, { method: 'DELETE' });
-      setNotice('Entrada excluída da fila.');
+      await api(`/admin/queue/${id}`, { method: 'PATCH', body: { status: 'done' } });
+      setNotice('Atendimento concluído.');
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao excluir da fila.');
+      setError(err instanceof Error ? err.message : 'Erro ao concluir atendimento.');
     }
   }
 
@@ -1402,11 +1407,11 @@ function AdminDashboard() {
               <QueueStatusBadge item={item} />
               <button 
                 className="danger-action" 
-                title="Excluir da fila"
-                onClick={() => void deleteQueueEntry(item.id)}
-                style={{ height: 32, padding: '0 12px', fontSize: '0.85rem' }}
+                title="Concluir atendimento"
+                onClick={() => void completeQueueEntry(item.id)}
+                style={{ height: 32, padding: '0 12px', fontSize: '0.85rem', background: 'var(--primary)', color: 'white', borderColor: 'var(--primary)' }}
               >
-                <Trash2 size={14} /> Excluir
+                <CheckCircle size={14} /> Concluir
               </button>
             </div>
           ))}

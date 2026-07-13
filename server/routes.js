@@ -206,7 +206,7 @@ router.post('/auth/register', async (req, res, next) => {
       VALUES (@id, @name, @email, @password_hash, @role, @avatar, 'local', @created_at, @last_login)
     `, [user]);
 
-    const token = signToken(user, req);
+    const token = await signToken(user, req);
     logAudit(user.id, 'registered', 'users', user.id);
     return res.status(201).json({ user: publicUser(user), token });
   } catch (error) {
@@ -227,7 +227,7 @@ router.post('/auth/login', async (req, res, next) => {
     await dbRun('UPDATE users SET last_seen = ? WHERE id = ?', [now(), user.id]);
     const refreshed = await dbGet('SELECT * FROM users WHERE id = ?', [user.id]);
     logAudit(user.id, 'logged_in', 'users', user.id);
-    return res.json({ user: publicUser(refreshed), token: signToken(refreshed, req) });
+    return res.json({ user: publicUser(refreshed), token: await signToken(refreshed, req) });
   } catch (error) {
     return next(error);
   }
@@ -247,7 +247,7 @@ router.get(
   '/auth/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: '/login?oauth=failed' }),
   async (req, res) => {
-    const token = signToken(req.user, req);
+    const token = await signToken(req.user, req);
     const forwardedProto = req.get('x-forwarded-proto') || req.protocol;
     const forwardedHost = req.get('x-forwarded-host') || req.get('host');
     const clientUrl = process.env.CLIENT_URL || `${forwardedProto}://${forwardedHost}`;

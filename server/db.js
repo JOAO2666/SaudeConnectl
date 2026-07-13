@@ -222,19 +222,19 @@ function ensureColumn(table, column, definition) {
 function seedDb() {
   const seedTime = now();
   upsertUser({
-    id: 'usr_admin_old',
+    id: 'usr_admin',
     name: 'Administrador',
     email: 'admin@saudeconnect.com',
     password_hash: bcrypt.hashSync('Admin@12345', 12),
     role: 'admin',
-    avatar: 'AS',
+    avatar: 'AD',
     created_at: seedTime,
     last_login: seedTime,
     last_seen: seedTime,
   });
 
   upsertUser({
-    id: 'usr_paciente_old',
+    id: 'usr_paciente',
     name: 'Paciente',
     email: 'paciente@saudeconnect.com',
     password_hash: bcrypt.hashSync('Paciente@12345', 12),

@@ -953,13 +953,13 @@ function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>
               item.triage_color === 'Verde' ? 'var(--success)' : 
               'var(--primary)'}` : '4px solid transparent' }}>
               <div>
-                <strong>#{item.position}</strong>
+                <strong>#{item.position} - {item.user_name}</strong>
                 <span>{item.service}</span>
               </div>
               <p>{item.unit_name}</p>
               {item.chief_complaint && <p style={{fontSize: '0.85em', margin: '4px 0'}}>Queixa: {item.chief_complaint}</p>}
               <small>{item.deadline_time ? `Atender até: ${new Date(item.deadline_time).toLocaleTimeString()}` : `${item.estimated_minutes} min estimados`}</small>
-              <StatusBadge status={item.status} />
+              <StatusBadge status={item.status === 'Triagem realizada' && item.triage_color ? `Triagem realizada - ${item.triage_color}` : item.status} />
             </article>
           ))}
         </div>
@@ -988,7 +988,7 @@ function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>
         {message && <div className="form-message">{message}</div>}
         <button className="primary-action" type="submit">
           <ListChecks size={18} />
-          Entrar na fila
+          Enviar à fila
         </button>
       </form>
     </section>
@@ -1269,8 +1269,6 @@ function AdminDashboard() {
                 value={appointment.status}
                 onChange={(event) => void updateAppointment(appointment.id, event.target.value as AppointmentStatus)}
               >
-                <option value="pending">Pendente</option>
-                <option value="confirmed">Confirmado</option>
                 <option value="completed">Concluído</option>
                 <option value="cancelled">Cancelado</option>
               </select>

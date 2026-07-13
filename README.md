@@ -114,6 +114,11 @@ npm run start
 
 Acesse `http://localhost:3001`.
 
+**Usuários de teste:**
+
+* **Admin:** `admin@saudeconnect.com` / `Admin@12345`
+* **Paciente:** `paciente@saudeconnect.com` / `Paciente@12345`
+
 Para desenvolvimento com atualização automática:
 
 ```bash

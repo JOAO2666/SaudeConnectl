@@ -758,6 +758,18 @@ router.patch('/admin/appointments/:id', authRequired, adminRequired, (req, res, 
   }
 });
 
+router.delete('/admin/appointments/:id', authRequired, adminRequired, (req, res, next) => {
+  try {
+    const result = db.prepare('DELETE FROM appointments WHERE id = ?').run(req.params.id);
+    if (result.changes === 0) return res.status(404).json({ message: 'Agendamento nao encontrado.' });
+    
+    logAudit(req.user.id, 'deleted_appointment', 'appointments', req.params.id);
+    return res.json({ success: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.patch('/admin/tickets/:id', authRequired, adminRequired, (req, res, next) => {
   try {
     const input = statusSchema.parse(req.body);

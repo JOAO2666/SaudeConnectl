@@ -33,6 +33,7 @@ import {
   UserPlus,
   UsersRound,
   Wifi,
+  Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap } from 'react-leaflet';
@@ -372,7 +373,7 @@ function PortalPage({ page }: { page: PortalPageName }) {
       {page === 'profile' && <ProfilePage profile={data.profile} onSaved={load} isAdminView={data.user.role === 'admin'} />}
       {page === 'records' && <RecordsPage records={data.records} exams={data.exams} onCreated={load} isAdminView={data.user.role === 'admin'} users={data.users} />}
       {page === 'triage' && <TriagePage triage={data.triage} onCreated={load} isAdminView={data.user.role === 'admin'} users={data.users} queue={data.queue} />}
-      {page === 'queue' && <QueuePage queue={data.queue} onCreated={load} users={data.users} />}
+      {page === 'queue' && <QueuePage queue={data.queue} onCreated={load} users={data.users} units={data.units} />}
     </DashboardShell>
   );
 }
@@ -972,22 +973,28 @@ function TriagePage({
   );
 }
 
-function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>; queue: QueueEntry[]; users?: DashboardPayload['users'] }) {
+function QueuePage({ onCreated, queue, users, units }: { onCreated: () => Promise<void>; queue: QueueEntry[]; users?: DashboardPayload['users']; units?: any[] }) {
   const [service, setService] = useState('Clínica geral');
   const [chiefComplaint, setChiefComplaint] = useState('Checkup de rotina');
   const [message, setMessage] = useState('');
   const [userId, setUserId] = useState('');
+  const [selectedUnitId, setSelectedUnitId] = useState(() => sessionStorage.getItem('saudeconnect.unitFilter') || '');
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage('');
-    const unitId = sessionStorage.getItem('saudeconnect.unitFilter');
-    if (!unitId) {
-      setMessage('Nenhuma unidade selecionada na página Início.');
+    
+    let targetUnitId = selectedUnitId;
+    if (!users) {
+      targetUnitId = sessionStorage.getItem('saudeconnect.unitFilter') || '';
+    }
+
+    if (!targetUnitId) {
+      setMessage('Nenhuma unidade selecionada.');
       return;
     }
     try {
-      await api('/queue', { method: 'POST', body: { unitId, service, chiefComplaint, user_id: userId || undefined } });
+      await api('/queue', { method: 'POST', body: { unitId: targetUnitId, service, chiefComplaint, user_id: userId || undefined } });
       setMessage('Entrada adicionada à fila digital.');
       await onCreated();
     } catch (error) {
@@ -1022,6 +1029,19 @@ function QueuePage({ onCreated, queue, users }: { onCreated: () => Promise<void>
       {users && (
         <form className="action-panel" onSubmit={submit}>
           <SectionHeader icon={<Plus />} title="Adicionar paciente na fila" />
+          
+          {units && units.length > 0 && (
+            <label>
+              Unidade
+              <select value={selectedUnitId} onChange={(event) => setSelectedUnitId(event.target.value)} required>
+                <option value="">Selecione a unidade...</option>
+                {units.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <label>
             Paciente
             <select value={userId} onChange={(event) => setUserId(event.target.value)} required>
@@ -1097,6 +1117,17 @@ function AdminDashboard() {
 
   async function updateAppointment(id: string, status: AppointmentStatus) {
     await mutate(`/admin/appointments/${id}`, { status }, 'Agendamento atualizado.');
+  }
+
+  async function deleteAppointment(id: string) {
+    if (!confirm('Tem certeza que deseja excluir este agendamento?')) return;
+    try {
+      await api(`/admin/appointments/${id}`, { method: 'DELETE' });
+      setNotice('Agendamento excluído com sucesso.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao excluir agendamento.');
+    }
   }
 
 
@@ -1293,7 +1324,17 @@ function AdminDashboard() {
                 <span>{appointment.specialty} - {appointment.unit_name}</span>
               </div>
               <small>{formatDate(appointment.scheduled_at)}</small>
-              <StatusBadge status={appointment.status} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <StatusBadge status={appointment.status} />
+                <button 
+                  className="icon-btn" 
+                  style={{ color: 'var(--danger)', padding: 4 }} 
+                  title="Excluir"
+                  onClick={() => void deleteAppointment(appointment.id)}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
             </div>
           ))}
           {!visibleAppointments.length && <div className="admin-empty">Nenhum agendamento encontrado.</div>}
